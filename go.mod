@@ -1,3 +1,3 @@
-module github.com/deep-commit/gensyn-rl-swarm-supervisor
+module github.com/Deep-Commit/gswarm
 
 go 1.21 

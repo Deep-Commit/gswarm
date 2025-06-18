@@ -21,10 +21,20 @@ A robust Go-based supervisor for Gensyn RL Swarm that provides automatic restart
 
 ### Installation
 
-1. **Install globally**:
-   ```bash
-   go install github.com/deep-commit/gensyn-rl-swarm-supervisor/cmd/gswarm@latest
-   ```
+#### Option 1: Install with Go (Recommended)
+```bash
+go install github.com/Deep-Commit/gswarm/cmd/gswarm@latest
+```
+This will place the `gswarm` binary in your `$GOPATH/bin` or `$HOME/go/bin` (make sure this is in your PATH).
+
+#### Option 2: Clone and Build from Source
+```bash
+git clone https://github.com/Deep-Commit/gswarm.git
+cd gswarm
+make build
+make install
+```
+After this, you can run `gswarm` from anywhere (if your Go bin directory is in your PATH).
 
 2. **Navigate to your Gensyn RL Swarm directory** (where your RL Swarm code and config are located):
    ```bash
