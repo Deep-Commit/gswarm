@@ -30,95 +30,95 @@ This roadmap outlines the development plan for GSwarm, a **third-party** Go-base
 - **Configuration Profiles**: Save/load configuration presets
 - **Advanced Error Handling**: Intelligent error classification and recovery
 
-### 🚫 Out of Scope (Core RL Swarm Features)
-- Training algorithm modifications
-- Blockchain smart contract changes
-- Model architecture changes
-- Core hivemind functionality
-- Official Gensyn protocol modifications
-
 ---
 
 ## Development Phases
 
 ### Phase 1: Core Enhancements (Q3 2025 - Q4 2025)
 
-#### Q3 2025 (July - September)
-
-**Week 1-2 (July 1-14): Enhanced Monitoring**
+#### Phase 1A: Enhanced Monitoring (Q3 2025)
 - [ ] Real-time performance monitoring (CPU, memory, GPU usage)
 - [ ] Training progress tracking
 - [ ] Health check system
 - [ ] Basic metrics collection
+- [ ] Performance optimization
+- [ ] Testing and documentation
 
-**Week 3-4 (July 15-28): Configuration Profiles**
+#### Phase 1B: Configuration Management (Q3 2025)
 - [ ] Save/load configuration presets
 - [ ] Profile management commands
 - [ ] Configuration validation
 - [ ] Profile templates for common setups
+- [ ] Import/export functionality
+- [ ] User experience improvements
 
-**Week 5-6 (July 29 - August 11): Improved Error Handling**
+#### Phase 1C: Error Handling & Diagnostics (Q3 2025)
 - [ ] Better error classification
 - [ ] Enhanced restart strategies
 - [ ] Diagnostic tools
 - [ ] Error reporting improvements
+- [ ] System state monitoring
+- [ ] Troubleshooting guides
 
-**Week 7-8 (August 12-25): Testing & Polish**
-- [ ] Comprehensive testing
-- [ ] Performance optimization
-- [ ] Documentation updates
-- [ ] Bug fixes and improvements
-
-#### Q4 2025 (October - December)
-
-**Week 9-10 (October 1-14): Multi-Node Support**
+#### Phase 1D: Multi-Node Support (Q4 2025)
 - [ ] Basic multi-GPU management
 - [ ] Node coordination
 - [ ] Resource monitoring across nodes
+- [ ] Coordinated startup/shutdown
+- [ ] Load balancing
+- [ ] Performance testing
 
-**Week 11-12 (October 15-28): Enhanced Logging**
+#### Phase 1E: Enhanced Logging (Q4 2025)
 - [ ] Structured logging (JSON format)
 - [ ] Log search and filtering
 - [ ] Log rotation and management
+- [ ] Log analysis tools
+- [ ] Performance metrics
+- [ ] Documentation updates
 
-**Week 13-14 (October 29 - November 11): Security & Stability**
+#### Phase 1F: Security & Stability (Q4 2025)
 - [ ] Secure credential handling
 - [ ] Process isolation improvements
 - [ ] Stability enhancements
-
-**Week 15-16 (November 12-25): Final Polish**
-- [ ] Performance optimization
-- [ ] User experience improvements
-- [ ] Documentation completion
-- [ ] Release preparation
+- [ ] Security best practices
+- [ ] Cross-platform testing
+- [ ] Final polish and optimization
 
 ---
 
-### Phase 2: User Experience (Q1 2026)
+### Phase 2: Local GUI Application (Q1 2026)
 
-#### January 2026
+#### Phase 2A: GUI Foundation (Q1 2026)
+- [ ] Desktop application framework setup
+- [ ] Basic window and layout design
+- [ ] Real-time monitoring dashboard
+- [ ] Process status visualization
+- [ ] Cross-platform compatibility
+- [ ] Basic user interface
 
-**Week 1-2: Simple Web Interface**
-- [ ] Basic web dashboard for monitoring
-- [ ] Real-time status display
-- [ ] Configuration management UI
+#### Phase 2B: Core GUI Features (Q1 2026)
+- [ ] Configuration management interface
+- [ ] Profile creation and editing
+- [ ] Start/stop/restart controls
+- [ ] Real-time log viewing
+- [ ] Settings and preferences
+- [ ] User experience testing
 
-**Week 3-4: REST API**
-- [ ] Basic REST API for status queries
-- [ ] Configuration management endpoints
-- [ ] API documentation
+#### Phase 2C: Advanced GUI Features (Q1 2026)
+- [ ] Performance charts and graphs
+- [ ] Multi-node management interface
+- [ ] Notification system integration
+- [ ] System tray integration
+- [ ] Auto-start functionality
+- [ ] Advanced monitoring features
 
-#### February 2026
-
-**Week 5-6: Advanced Features**
-- [ ] Notification system (email, Discord)
-- [ ] Automated reporting
-- [ ] Performance analytics
-
-**Week 7-8: Integration & Testing**
-- [ ] Third-party integrations
+#### Phase 2D: Polish & Integration (Q1 2026)
+- [ ] User experience refinements
+- [ ] Performance optimization
 - [ ] Comprehensive testing
-- [ ] Documentation updates
+- [ ] Documentation completion
+- [ ] Release preparation
+- [ ] Community feedback integration
 
 ---
 
@@ -126,16 +126,64 @@ This roadmap outlines the development plan for GSwarm, a **third-party** Go-base
 
 ### Q3 2025 Milestones
 - [ ] **v1.1.0**: Enhanced monitoring and configuration profiles
-- [ ] **v1.2.0**: Improved error handling and multi-node support
-- [ ] **v1.3.0**: Enhanced logging and security features
+- [ ] **v1.2.0**: Improved error handling and diagnostics
+- [ ] **v1.3.0**: Multi-node support and enhanced logging
 
 ### Q4 2025 Milestones
-- [ ] **v1.4.0**: Performance optimization and stability improvements
-- [ ] **v1.5.0**: Q4 release with all Phase 1 features
+- [ ] **v1.4.0**: Security enhancements and stability improvements
+- [ ] **v1.5.0**: Phase 1 completion with all core features
 
 ### Q1 2026 Milestones
-- [ ] **v2.0.0**: Web dashboard and REST API
-- [ ] **v2.1.0**: Advanced features and integrations
+- [ ] **v2.0.0**: Local GUI application with monitoring dashboard
+- [ ] **v2.1.0**: Advanced GUI features and system integration
+
+---
+
+## Local GUI Features
+
+### Core Functionality
+- **Real-time Monitoring Dashboard**
+  - CPU, memory, and GPU usage charts
+  - Training progress visualization
+  - Process status indicators
+  - Health check results
+
+- **Configuration Management**
+  - Visual profile editor
+  - Template selection
+  - Configuration validation
+  - Import/export functionality
+
+- **Process Control**
+  - One-click start/stop/restart
+  - Process status monitoring
+  - Log viewing with search/filter
+  - Error notifications
+
+### Advanced Features
+- **Multi-Node Management**
+  - Multi-GPU node overview
+  - Individual node controls
+  - Resource allocation visualization
+  - Coordinated operations
+
+- **System Integration**
+  - System tray icon
+  - Auto-start with system
+  - Desktop notifications
+  - Keyboard shortcuts
+
+- **User Experience**
+  - Dark/light theme support
+  - Customizable layouts
+  - Export reports
+  - Help and documentation
+
+### Technical Implementation
+- **Framework**: Fyne (Go-based cross-platform GUI)
+- **Architecture**: Local application with embedded web server
+- **Data Storage**: Local SQLite database
+- **Updates**: Built-in update mechanism
 
 ---
 

@@ -1,5 +1,9 @@
 # Gensyn RL Swarm Supervisor
 
+> **⚠️ Important Notice: This is a third-party application**
+> 
+> GSwarm is **NOT** affiliated with or endorsed by the official Gensyn team. This is an independent, community-developed supervisor tool designed to enhance the user experience of running Gensyn RL Swarm. We cannot modify the core RL Swarm functionality, training algorithms, or blockchain integration.
+
 A robust Go-based supervisor for Gensyn RL Swarm that provides automatic restart capabilities, dependency management, and comprehensive logging.
 
 ## ✨ Features
@@ -276,3 +280,43 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [Gensyn RL Swarm](https://github.com/gensyn-ai/rl-swarm) - The main RL Swarm application
 - [Documentation](https://docs.gensyn.ai) - Official documentation
+
+## 📋 About This Project
+
+### Third-Party Status
+GSwarm is an **independent, community-developed tool** that operates as a supervisor/wrapper around the official Gensyn RL Swarm application. We are not affiliated with the Gensyn team and cannot modify the core RL Swarm functionality.
+
+### What We Can Do
+- Process management and supervision
+- Environment setup and dependency management
+- Monitoring and logging
+- Configuration management
+- User experience improvements
+
+### What We Cannot Do
+- Modify training algorithms
+- Change blockchain smart contracts
+- Alter model architectures
+- Modify core hivemind functionality
+- Change the official Gensyn protocol
+
+### Support
+For issues related to the core RL Swarm application, please contact the official Gensyn team. For issues with GSwarm itself, please use our GitHub issues page.
+
+## 🗺️ Roadmap
+
+For detailed information about upcoming features and development plans, see our [Development Roadmap](ROADMAP.md).
+
+**Note**: GSwarm is a **third-party supervisor tool** for Gensyn RL Swarm. We cannot modify the core RL Swarm functionality, training algorithms, or blockchain integration. Our scope is limited to process management, monitoring, and user experience improvements.
+
+### Current Development Focus (Q3 2025)
+- **Enhanced Monitoring**: Real-time performance metrics collection
+- **Configuration Profiles**: Save/load configuration presets  
+- **Improved Error Handling**: Better error classification and recovery
+- **Multi-Node Support**: Basic management of multiple GPU nodes
+
+### Upcoming Features
+- **Local GUI Application**: Desktop application for monitoring and control
+- **Real-time Dashboard**: Visual monitoring with charts and graphs
+- **Configuration Management**: Visual profile editor and templates
+- **System Integration**: System tray, notifications, and auto-start
