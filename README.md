@@ -31,6 +31,11 @@ go install github.com/Deep-Commit/gswarm/cmd/gswarm@latest
 ```
 This will place the `gswarm` binary in your `$GOPATH/bin` or `$HOME/go/bin` (make sure this is in your PATH).
 
+**Verify installation:**
+```bash
+gswarm -version
+```
+
 #### Option 2: Clone and Build from Source
 ```bash
 git clone https://github.com/Deep-Commit/gswarm.git

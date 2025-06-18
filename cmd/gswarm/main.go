@@ -20,6 +20,13 @@ import (
 	"time"
 )
 
+// Version information
+var (
+	Version   = "1.0.0"
+	BuildDate = "unknown"
+	GitCommit = "unknown"
+)
+
 var errorMarkers = []string{
 	">> An error was detected while running rl-swarm.",
 	">> Shutting down trainer...",
@@ -734,8 +741,19 @@ func main() {
 	var modelSize = flag.String("model-size", "0.5", "Model size in billions")
 	var bigSwarm = flag.Bool("big-swarm", false, "Use big swarm (Math Hard)")
 	var cpuOnly = flag.Bool("cpu-only", true, "Force CPU-only mode")
+	var showVersion = flag.Bool("version", false, "Show version information")
 
 	flag.Parse()
+
+	// Handle version flag
+	if *showVersion {
+		fmt.Printf("GSwarm version %s\n", Version)
+		fmt.Printf("Build date: %s\n", BuildDate)
+		fmt.Printf("Git commit: %s\n", GitCommit)
+		fmt.Printf("Go version: %s\n", runtime.Version())
+		fmt.Printf("OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		os.Exit(0)
+	}
 
 	fmt.Println("Starting RL Swarm Supervisor...")
 
@@ -746,6 +764,25 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("Python version OK")
+
+	// Check for Yarn and install if missing
+	fmt.Println("Checking for Yarn...")
+	if err := checkYarn(); err != nil {
+		fmt.Println("Yarn not found. Attempting to install with 'npm install -g yarn'...")
+		cmd := exec.Command("npm", "install", "-g", "yarn")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Failed to install Yarn: %v\n", err)
+			os.Exit(1)
+		}
+		// Double-check Yarn is now available
+		if err := checkYarn(); err != nil {
+			fmt.Printf("Yarn installation verification failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	fmt.Println("Yarn is available.")
 
 	// Print banner
 	printBanner()

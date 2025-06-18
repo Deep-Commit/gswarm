@@ -1,94 +1,115 @@
-# Gensyn RL Swarm Supervisor Makefile
+# GSwarm Makefile
 
-# Variables
-BINARY_NAME=gswarm
-VERSION?=1.0.0
-BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
-GIT_COMMIT=$(shell git rev-parse --short HEAD)
-LDFLAGS=-ldflags "-X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME} -X main.GitCommit=${GIT_COMMIT}"
+# Version information
+VERSION := $(shell cat VERSION 2>/dev/null || echo "1.0.0")
+BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# Build flags
+LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildDate=$(BUILD_DATE) -X main.GitCommit=$(GIT_COMMIT)"
+
+# Binary name
+BINARY_NAME := gswarm
+
+# Build directory
+BUILD_DIR := build
+
+# Go files
+GO_FILES := $(shell find . -name "*.go" -type f)
+
+.PHONY: all build clean install test fmt lint version help
 
 # Default target
-.PHONY: all
 all: build
 
 # Build the application
-.PHONY: build
 build:
-	@echo "Building ${BINARY_NAME}..."
-	go build ${LDFLAGS} -o ${BINARY_NAME} ./cmd/gswarm
+	@echo "Building GSwarm version $(VERSION)..."
+	@mkdir -p $(BUILD_DIR)
+	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gswarm
+	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+
+# Build for all platforms
+build-all: clean
+	@echo "Building GSwarm for all platforms..."
+	@mkdir -p $(BUILD_DIR)
+	
+	# Linux
+	@echo "Building for Linux..."
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/gswarm
+	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gswarm
+	
+	# macOS
+	@echo "Building for macOS..."
+	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/gswarm
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/gswarm
+	
+	# Windows
+	@echo "Building for Windows..."
+	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/gswarm
+	
+	@echo "Build complete for all platforms!"
 
 # Install the application
-.PHONY: install
-install:
-	@echo "Installing ${BINARY_NAME}..."
-	go install ${LDFLAGS} ./cmd/gswarm
+install: build
+	@echo "Installing GSwarm..."
+	@cp $(BUILD_DIR)/$(BINARY_NAME) $(shell go env GOPATH)/bin/
+	@echo "Installation complete!"
 
 # Clean build artifacts
-.PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f ${BINARY_NAME}
-	rm -f ${BINARY_NAME}-*
-	rm -rf logs/
-	go clean
+	@rm -rf $(BUILD_DIR)
+	@echo "Clean complete!"
 
 # Run tests
-.PHONY: test
 test:
 	@echo "Running tests..."
-	go test -v ./...
+	@go test -v ./...
 
 # Run tests with coverage
-.PHONY: test-coverage
 test-coverage:
 	@echo "Running tests with coverage..."
-	go test -v -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
+	@go test -v -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
 # Format code
-.PHONY: fmt
 fmt:
 	@echo "Formatting code..."
-	go fmt ./...
+	@go fmt ./...
 
-# Run linter
-.PHONY: lint
+# Lint code
 lint:
-	@echo "Running linter..."
-	golangci-lint run
+	@echo "Linting code..."
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
+	fi
 
-# Build for multiple platforms
-.PHONY: build-all
-build-all: clean
-	@echo "Building for multiple platforms..."
-	GOOS=linux GOARCH=amd64 go build ${LDFLAGS} -o ${BINARY_NAME}-linux-amd64 ./cmd/gswarm
-	GOOS=linux GOARCH=arm64 go build ${LDFLAGS} -o ${BINARY_NAME}-linux-arm64 ./cmd/gswarm
-	GOOS=darwin GOARCH=amd64 go build ${LDFLAGS} -o ${BINARY_NAME}-darwin-amd64 ./cmd/gswarm
-	GOOS=darwin GOARCH=arm64 go build ${LDFLAGS} -o ${BINARY_NAME}-darwin-arm64 ./cmd/gswarm
-	GOOS=windows GOARCH=amd64 go build ${LDFLAGS} -o ${BINARY_NAME}-windows-amd64.exe ./cmd/gswarm
-
-# Create release archive
-.PHONY: release
-release: build-all
-	@echo "Creating release archives..."
-	tar -czf ${BINARY_NAME}-${VERSION}-linux-amd64.tar.gz ${BINARY_NAME}-linux-amd64
-	tar -czf ${BINARY_NAME}-${VERSION}-linux-arm64.tar.gz ${BINARY_NAME}-linux-arm64
-	tar -czf ${BINARY_NAME}-${VERSION}-darwin-amd64.tar.gz ${BINARY_NAME}-darwin-amd64
-	tar -czf ${BINARY_NAME}-${VERSION}-darwin-arm64.tar.gz ${BINARY_NAME}-darwin-arm64
-	zip ${BINARY_NAME}-${VERSION}-windows-amd64.zip ${BINARY_NAME}-windows-amd64.exe
+# Show version information
+version:
+	@echo "GSwarm version: $(VERSION)"
+	@echo "Build date: $(BUILD_DATE)"
+	@echo "Git commit: $(GIT_COMMIT)"
 
 # Show help
-.PHONY: help
 help:
+	@echo "GSwarm Makefile"
+	@echo ""
 	@echo "Available targets:"
 	@echo "  build        - Build the application"
+	@echo "  build-all    - Build for all platforms (Linux, macOS, Windows)"
 	@echo "  install      - Install the application"
 	@echo "  clean        - Clean build artifacts"
 	@echo "  test         - Run tests"
-	@echo "  test-coverage- Run tests with coverage report"
+	@echo "  test-coverage - Run tests with coverage report"
 	@echo "  fmt          - Format code"
-	@echo "  lint         - Run linter"
-	@echo "  build-all    - Build for multiple platforms"
-	@echo "  release      - Create release archives"
-	@echo "  help         - Show this help message" 
+	@echo "  lint         - Lint code"
+	@echo "  version      - Show version information"
+	@echo "  help         - Show this help message"
+	@echo ""
+	@echo "Version: $(VERSION)"
+	@echo "Build date: $(BUILD_DATE)"
+	@echo "Git commit: $(GIT_COMMIT)" 
