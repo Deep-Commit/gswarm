@@ -272,6 +272,23 @@ your-gensyn-rl-swarm-project/
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
+## 💝 Support the Project
+
+If you find GSwarm helpful and would like to support its development, consider making a donation:
+
+**Ethereum Address:**
+```
+0xA22e20BA3336f5Bd6eCE959F5ac4083C9693e316
+```
+
+Your support helps us:
+- Maintain and improve the supervisor tool
+- Add new features and enhancements
+- Provide better documentation and support
+- Keep the project free and open source
+
+Thank you for your support! 🙏
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
