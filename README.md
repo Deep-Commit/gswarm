@@ -190,8 +190,8 @@ Example log entry:
 ### Building from Source
 
 ```bash
-git clone https://github.com/deep-commit/gensyn-rl-swarm-supervisor.git
-cd gensyn-rl-swarm-supervisor
+git clone https://github.com/Deep-Commit/gswarm.git
+cd gswarm
 make build
 make build-all
 make install
@@ -229,7 +229,7 @@ make lint
 
 4. **"gswarm command not found"**
    - Ensure Go is installed and `$GOPATH/bin` is in your PATH
-   - Reinstall with: `go install github.com/deep-commit/gensyn-rl-swarm-supervisor/cmd/gswarm@latest`
+   - Reinstall with: `go install github.com/Deep-Commit/gswarm/cmd/gswarm@latest`
 
 5. **"HF token prompt appears when not expected"**
    - Use `-hf_token YOUR_TOKEN` to provide the token via command line
