@@ -17,7 +17,7 @@ BUILD_DIR := build
 # Go files
 GO_FILES := $(shell find . -name "*.go" -type f)
 
-.PHONY: all build clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help token-monitor token-cleanup
+.PHONY: all build clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help token-cleanup
 
 # Default target
 all: build
@@ -26,7 +26,7 @@ all: build
 build:
 	@echo "Building GSwarm version $(VERSION)..."
 	@mkdir -p $(BUILD_DIR)
-	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gswarm token_manager.go
+	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gswarm
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
 # Build for all platforms
@@ -36,25 +36,25 @@ build-all: clean
 	
 	# Linux
 	@echo "Building for Linux..."
-	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/gswarm token_manager.go
-	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gswarm token_manager.go
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/gswarm
+	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gswarm
 	
 	# macOS
 	@echo "Building for macOS..."
-	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/gswarm token_manager.go
-	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/gswarm token_manager.go
+	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/gswarm
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/gswarm
 	
 	# Windows
 	@echo "Building for Windows..."
-	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/gswarm token_manager.go
+	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/gswarm
 	
 	@echo "Build complete for all platforms!"
 
 # Install the application
 install: build
 	@echo "Installing GSwarm..."
-	@cp $(BUILD_DIR)/$(BINARY_NAME) $(shell go env GOPATH)/bin/
-	@chmod +x scripts/token_refresh.sh
+	@rm -f $(shell go env GOPATH)/bin/$(BINARY_NAME)
+	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(BINARY_NAME) $(shell go env GOPATH)/bin/$(BINARY_NAME)
 	@echo "Installation complete!"
 
 # Clean build artifacts
@@ -130,11 +130,6 @@ lint-full: lint-vet lint-staticcheck
 	fi
 
 # Token management targets
-token-monitor:
-	@echo "Starting token monitoring..."
-	@chmod +x scripts/token_refresh.sh
-	@./scripts/token_refresh.sh
-
 token-cleanup:
 	@echo "Cleaning up expired tokens..."
 	@rm -f ~/.gswarm/tokens.json
@@ -167,7 +162,6 @@ help:
 	@echo "  lint-vet     - Run go vet (basic Go toolchain checks)"
 	@echo "  lint-staticcheck - Run Staticcheck (advanced static analysis)"
 	@echo "  lint-full    - Run full linting suite with extended timeout"
-	@echo "  token-monitor - Start token monitoring script"
 	@echo "  token-cleanup - Clean up expired tokens"
 	@echo "  version      - Show version information"
 	@echo "  help         - Show this help message"

@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -94,27 +96,52 @@ func printBanner() {
 
 // ensureRepo ensures we're in the correct repository
 func ensureRepo() error {
+	// First check if we're already in the rl-swarm directory
 	if _, err := os.Stat("go.mod"); os.IsNotExist(err) {
-		fmt.Println("Not in RL-Swarm repository. Cloning...")
+		// Not in a directory with go.mod, check if rl-swarm subdirectory exists
+		if _, err := os.Stat("rl-swarm"); os.IsNotExist(err) {
+			fmt.Println("Not in RL-Swarm repository. Cloning...")
 
-		// Check if git is available
-		if err := checkGit(); err != nil {
-			if err := installGit(); err != nil {
-				return fmt.Errorf("failed to install git: %w", err)
+			// Check if git is available
+			if err := checkGit(); err != nil {
+				if err := installGit(); err != nil {
+					return fmt.Errorf("failed to install git: %w", err)
+				}
 			}
-		}
 
-		cmd := exec.Command("git", "clone", "https://github.com/gensyn-ai/rl-swarm.git")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to clone rl-swarm: %w", err)
+			cmd := exec.Command("git", "clone", "https://github.com/gensyn-ai/rl-swarm.git")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("failed to clone rl-swarm: %w", err)
+			}
+			fmt.Println("Successfully cloned RL-Swarm repository")
+		} else {
+			fmt.Println("Found existing rl-swarm directory")
 		}
+	} else {
+		// We're in a directory with go.mod, check if it's the gswarm directory
+		// and if so, look for rl-swarm subdirectory
+		if _, err := os.Stat("rl-swarm"); os.IsNotExist(err) {
+			fmt.Println("Not in RL-Swarm repository. Cloning...")
 
-		if err := os.Chdir("rl-swarm"); err != nil {
-			return fmt.Errorf("failed to change to rl-swarm directory: %w", err)
+			// Check if git is available
+			if err := checkGit(); err != nil {
+				if err := installGit(); err != nil {
+					return fmt.Errorf("failed to install git: %w", err)
+				}
+			}
+
+			cmd := exec.Command("git", "clone", "https://github.com/gensyn-ai/rl-swarm.git")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("failed to clone rl-swarm: %w", err)
+			}
+			fmt.Println("Successfully cloned RL-Swarm repository")
+		} else {
+			fmt.Println("Found existing rl-swarm directory")
 		}
-		fmt.Println("Successfully cloned and entered RL-Swarm repository")
 	}
 	return nil
 }
@@ -152,7 +179,8 @@ func installGit() error {
 
 // ensureVenv ensures the Python virtual environment exists and is properly set up
 func ensureVenv() (string, error) {
-	venvPath := venvName
+	// Create virtual environment in the rl-swarm directory (like the run script)
+	venvPath := filepath.Join("rl-swarm", venvName)
 
 	// Check if venv already exists
 	if _, err := os.Stat(venvPath); os.IsNotExist(err) {
@@ -360,86 +388,242 @@ func installYarn() error {
 	return nil
 }
 
-func setupModalLogin(_ Configuration) (string, error) {
+func setupModalLogin(config Configuration) (string, error) {
 	fmt.Println("\n=== Modal Login Setup ===")
-	fmt.Println("To connect to the testnet, you need to authenticate with Modal.")
+	fmt.Println("To connect to the testnet, you need to authenticate with the local modal service.")
 	fmt.Println("This will open your browser to complete the login process.")
 
-	// Check if modal CLI is available
-	cmd := exec.Command("modal", "token", "new")
-	if err := cmd.Run(); err != nil {
-		fmt.Println("Modal CLI not found. Installing...")
+	// Check if the local modal service is running
+	fmt.Println("Checking if local modal service is running...")
+	resp, err := http.Get("http://localhost:3000")
+	if err != nil {
+		fmt.Println("Local modal service is not running. Starting it now...")
 
-		// Install modal CLI
-		installCmd := exec.Command("pip", "install", "modal")
-		installCmd.Stdout = os.Stdout
-		installCmd.Stderr = os.Stderr
-		if err := installCmd.Run(); err != nil {
-			return "", fmt.Errorf("failed to install modal CLI: %w", err)
+		// Start the modal-login service
+		if err := startModalLoginService(config); err != nil {
+			return "", fmt.Errorf("failed to start modal-login service: %w", err)
+		}
+
+		// Wait for the service to start
+		fmt.Println("Waiting for modal service to start...")
+		for i := 0; i < 30; i++ { // Wait up to 30 seconds
+			time.Sleep(1 * time.Second)
+			resp, err = http.Get("http://localhost:3000")
+			if err == nil && resp.StatusCode == 200 {
+				resp.Body.Close()
+				break
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+
+		if err != nil {
+			return "", fmt.Errorf("modal service failed to start after 30 seconds: %w", err)
+		}
+	} else {
+		resp.Body.Close()
+	}
+
+	fmt.Println("Local modal service is running. Opening browser...")
+	openBrowser("http://localhost:3000")
+
+	// Wait for the userData.json file to be created (like the run script does)
+	fmt.Println("Waiting for modal userData.json to be created...")
+
+	// Try different possible paths for userData.json
+	possiblePaths := []string{
+		"modal-login/temp-data/userData.json",
+		"rl-swarm/modal-login/temp-data/userData.json",
+	}
+
+	var userDataPath string
+	maxWait := 300 // 5 minutes like the run script
+	for i := 0; i < maxWait; i++ {
+		for _, path := range possiblePaths {
+			if _, err := os.Stat(path); err == nil {
+				userDataPath = path
+				break
+			}
+		}
+		if userDataPath != "" {
+			break
+		}
+		if i == maxWait-1 {
+			return "", fmt.Errorf("authentication timeout: userData.json not found after %d seconds. Checked paths: %v", maxWait, possiblePaths)
+		}
+		time.Sleep(5 * time.Second) // Check every 5 seconds like the run script
+	}
+
+	fmt.Println("Found userData.json. Proceeding...")
+
+	// Read the org ID from the userData.json file
+	data, err := os.ReadFile(userDataPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read userData.json: %w", err)
+	}
+
+	// Parse the userData.json file - it contains user data indexed by orgId
+	var userDataMap map[string]struct {
+		Email         string `json:"email"`
+		UserID        string `json:"userId"`
+		OrgID         string `json:"orgId"`
+		Address       string `json:"address"`
+		SolanaAddress string `json:"solanaAddress"`
+	}
+
+	if err := json.Unmarshal(data, &userDataMap); err != nil {
+		return "", fmt.Errorf("failed to parse userData.json: %w", err)
+	}
+
+	// Get the first (and should be only) orgId from the map
+	var orgID string
+	for key, userData := range userDataMap {
+		orgID = key // The key is the orgId
+		// Also verify the orgId field matches
+		if userData.OrgID != key {
+			return "", fmt.Errorf("orgId mismatch in userData.json")
+		}
+		break // We only need the first one
+	}
+
+	if orgID == "" {
+		return "", fmt.Errorf("no org ID found in userData.json")
+	}
+
+	fmt.Printf("Your ORG_ID is set to: %s\n", orgID)
+
+	// Wait until the API key is activated by the client (like the run script does)
+	fmt.Println("Waiting for API key to become activated...")
+	for {
+		resp, err := http.Get(fmt.Sprintf("http://localhost:3000/api/get-api-key-status?orgId=%s", orgID))
+		if err != nil {
+			fmt.Printf("Error checking API key status: %v\n", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		status, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Error reading API key status: %v\n", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		if string(status) == "activated" {
+			fmt.Println("API key is activated! Proceeding...")
+			break
+		} else {
+			fmt.Println("Waiting for API key to be activated...")
+			time.Sleep(5 * time.Second)
 		}
 	}
 
-	// Get the login URL
-	cmd = exec.Command("modal", "token", "new", "--json")
-	output, err := cmd.Output()
+	fmt.Printf("Successfully authenticated with local modal service (Org ID: %s)\n", orgID)
+	return orgID, nil
+}
+
+func startModalLoginService(config Configuration) error {
+	// Determine the modal-login directory path
+	modalLoginPath := "modal-login"
+	if _, err := os.Stat(modalLoginPath); os.IsNotExist(err) {
+		modalLoginPath = "rl-swarm/modal-login"
+		if _, err := os.Stat(modalLoginPath); os.IsNotExist(err) {
+			return fmt.Errorf("modal-login directory not found")
+		}
+	}
+
+	// Check if Node.js is available
+	if err := checkNodeJS(); err != nil {
+		if err := ensureNodeAndNpm(); err != nil {
+			return fmt.Errorf("failed to install Node.js: %w", err)
+		}
+	}
+
+	// Check if Yarn is available
+	if err := checkYarn(); err != nil {
+		if err := installYarn(); err != nil {
+			return fmt.Errorf("failed to install Yarn: %w", err)
+		}
+	}
+
+	// Create logs directory
+	if err := os.MkdirAll("logs", 0o755); err != nil {
+		return fmt.Errorf("failed to create logs directory: %w", err)
+	}
+
+	// Update the .env file with the contract address
+	envFile := filepath.Join(modalLoginPath, ".env")
+	if _, err := os.Stat(envFile); err == nil {
+		// Read the current .env file
+		data, err := os.ReadFile(envFile)
+		if err != nil {
+			return fmt.Errorf("failed to read .env file: %w", err)
+		}
+
+		// Update the SMART_CONTRACT_ADDRESS
+		lines := strings.Split(string(data), "\n")
+		updated := false
+		for i, line := range lines {
+			if strings.HasPrefix(line, "SMART_CONTRACT_ADDRESS=") {
+				lines[i] = "SMART_CONTRACT_ADDRESS=" + config.ContractAddress
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			lines = append(lines, "SMART_CONTRACT_ADDRESS="+config.ContractAddress)
+		}
+
+		// Write the updated .env file
+		if err := os.WriteFile(envFile, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+			return fmt.Errorf("failed to write .env file: %w", err)
+		}
+	}
+
+	// Change to modal-login directory
+	originalDir, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("failed to get modal login URL: %w", err)
+		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	var result struct {
-		URL string `json:"url"`
+	if err := os.Chdir(modalLoginPath); err != nil {
+		return fmt.Errorf("failed to change to modal-login directory: %w", err)
 	}
-	if err := json.Unmarshal(output, &result); err != nil {
-		return "", fmt.Errorf("failed to parse modal response: %w", err)
+	defer os.Chdir(originalDir)
+
+	// Install dependencies
+	fmt.Println("Installing modal-login dependencies...")
+	cmd := exec.Command("yarn", "install", "--immutable")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install dependencies: %w", err)
 	}
 
-	fmt.Printf("Opening browser to: %s\n", result.URL)
-	openBrowser(result.URL)
-
-	// Wait for user to complete login
-	fmt.Println("Please complete the login in your browser, then press Enter here...")
-	if _, err := fmt.Scanln(); err != nil {
-		return "", fmt.Errorf("failed to read user input: %w", err)
+	// Build the service
+	fmt.Println("Building modal-login service...")
+	cmd = exec.Command("yarn", "build")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to build modal-login service: %w", err)
 	}
 
-	// Get the token
-	cmd = exec.Command("modal", "token", "current", "--json")
-	output, err = cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get current modal token: %w", err)
+	// Start the service in the background
+	fmt.Println("Starting modal-login service...")
+	cmd = exec.Command("yarn", "start")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start modal-login service: %w", err)
 	}
 
-	var tokenResult struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(output, &tokenResult); err != nil {
-		return "", fmt.Errorf("failed to parse modal token response: %w", err)
-	}
+	// Give the service a moment to start
+	time.Sleep(2 * time.Second)
 
-	if tokenResult.Token == "" {
-		return "", fmt.Errorf("no modal token found after login")
-	}
-
-	// Get the org ID
-	cmd = exec.Command("modal", "org", "current", "--json")
-	output, err = cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get current modal org: %w", err)
-	}
-
-	var orgResult struct {
-		OrgID string `json:"org_id"`
-	}
-	if err := json.Unmarshal(output, &orgResult); err != nil {
-		return "", fmt.Errorf("failed to parse modal org response: %w", err)
-	}
-
-	if orgResult.OrgID == "" {
-		return "", fmt.Errorf("no modal org ID found after login")
-	}
-
-	fmt.Printf("Successfully authenticated with Modal (Org ID: %s)\n", orgResult.OrgID)
-	return orgResult.OrgID, nil
+	return nil
 }
 
 func openBrowser(url string) {
@@ -467,14 +651,25 @@ func installRequirements(venvPath string, requirementsFile string, _ *log.Logger
 		venvPython = filepath.Join(venvPath, "Scripts", "python.exe")
 	}
 
-	// Determine which requirements file to use
+	// Determine which requirements file to use (like the run script)
 	if requirementsFile == "" {
-		// Check for requirements.txt in current directory
-		if _, err := os.Stat("requirements.txt"); err == nil {
-			requirementsFile = "requirements.txt"
+		// Check if we're in CPU-only mode or no NVIDIA GPU found
+		if isCPUOnly() {
+			requirementsFile = "requirements-cpu.txt"
 		} else {
-			// Use default requirements
-			requirementsFile = "requirements.txt"
+			// NVIDIA GPU found
+			requirementsFile = "requirements-gpu.txt"
+		}
+	}
+
+	// Check if the requirements file exists in the current directory
+	if _, err := os.Stat(requirementsFile); os.IsNotExist(err) {
+		// Try in the rl-swarm subdirectory
+		rlSwarmPath := filepath.Join("rl-swarm", requirementsFile)
+		if _, err := os.Stat(rlSwarmPath); err == nil {
+			requirementsFile = rlSwarmPath
+		} else {
+			return fmt.Errorf("requirements file not found: %s or %s", requirementsFile, rlSwarmPath)
 		}
 	}
 
@@ -488,23 +683,43 @@ func installRequirements(venvPath string, requirementsFile string, _ *log.Logger
 		return fmt.Errorf("failed to install requirements: %w", err)
 	}
 
+	// If using GPU requirements, also install flash-attn (like the run script)
+	if strings.Contains(requirementsFile, "requirements-gpu.txt") {
+		fmt.Println("Installing flash-attn for GPU support...")
+		cmd = exec.Command(venvPython, "-m", "pip", "install", "flash-attn", "--no-build-isolation")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install flash-attn: %w", err)
+		}
+	}
+
 	return nil
 }
 
 func isCPUOnly() bool {
-	// Check if CUDA is available
+	// Check if CUDA is available by running nvidia-smi
 	cmd := exec.Command("nvidia-smi")
 	return cmd.Run() != nil
 }
 
 func getConfigPath(paramB string, useBigSwarm bool) string {
-	baseDir := "configs"
-	if useBigSwarm {
-		baseDir = filepath.Join(baseDir, "big_swarm")
+	// Use the same logic as the original run_rl_swarm.sh script
+	if isCPUOnly() {
+		// CPU-only mode uses mac configs
+		return "hivemind_exp/configs/mac/grpo-qwen-2.5-0.5b-deepseek-r1.yaml"
 	} else {
-		baseDir = filepath.Join(baseDir, "small_swarm")
+		// GPU mode uses gpu configs with different naming
+		switch paramB {
+		case "32", "72":
+			return fmt.Sprintf("hivemind_exp/configs/gpu/grpo-qwen-2.5-%sb-bnb-4bit-deepseek-r1.yaml", paramB)
+		case "0.5", "1.5", "7":
+			return fmt.Sprintf("hivemind_exp/configs/gpu/grpo-qwen-2.5-%sb-deepseek-r1.yaml", paramB)
+		default:
+			// Fallback to 0.5B config
+			return "hivemind_exp/configs/gpu/grpo-qwen-2.5-0.5b-deepseek-r1.yaml"
+		}
 	}
-	return filepath.Join(baseDir, fmt.Sprintf("%sB.yaml", paramB))
 }
 
 func promptUser(prompt string, defaultValue string, validOptions []string) string {
@@ -640,6 +855,11 @@ func getConfiguration(c *cli.Context) Configuration {
 		cfg.ConfigPath = getConfigPath(cfg.ParamB, cfg.UseBigSwarm)
 	}
 
+	// Override game type for CPU-only mode (always gsm8k for CPU)
+	if cfg.CPUOnly {
+		cfg.Game = GameGSM8K
+	}
+
 	// Force testnet if org-id is provided
 	if cfg.OrgID != "" {
 		cfg.ConnectToTestnet = true
@@ -649,7 +869,7 @@ func getConfiguration(c *cli.Context) Configuration {
 }
 
 // promptForMissingConfiguration prompts for any missing required configuration
-func promptForMissingConfiguration(cfg Configuration) Configuration {
+func promptForMissingConfiguration(cfg Configuration, c *cli.Context) Configuration {
 	// Prompt for testnet if not set
 	if !cfg.ConnectToTestnet {
 		cfg.ConnectToTestnet = promptYesNo("Would you like to connect to the Testnet?", "Y")
@@ -665,8 +885,8 @@ func promptForMissingConfiguration(cfg Configuration) Configuration {
 		cfg.UseBigSwarm = (choice == "Math Hard (big swarm)")
 	}
 
-	// Prompt for model size if not set
-	if cfg.ParamB == "" {
+	// Prompt for model size only if not explicitly provided via command line
+	if !c.IsSet("model-size") {
 		cfg.ParamB = promptUser(
 			"How many parameters (in billions)? [0.5,1.5,7,32,72]",
 			"0.5",
@@ -698,6 +918,16 @@ func promptForMissingConfiguration(cfg Configuration) Configuration {
 
 	if cfg.ConfigPath == "" {
 		cfg.ConfigPath = getConfigPath(cfg.ParamB, cfg.UseBigSwarm)
+	}
+
+	// Override game type for CPU-only mode (always gsm8k for CPU)
+	if cfg.CPUOnly {
+		cfg.Game = GameGSM8K
+	}
+
+	// Force testnet if org-id is provided
+	if cfg.OrgID != "" {
+		cfg.ConnectToTestnet = true
 	}
 
 	return cfg
@@ -732,10 +962,25 @@ func promptHFToken() string {
 }
 
 func runPythonTraining(config Configuration, venvPath string, logger *log.Logger) error {
-	venvPython := filepath.Join(venvPath, "bin", "python")
-	if runtime.GOOS == OSWindows {
-		venvPython = filepath.Join(venvPath, "Scripts", "python.exe")
+	// Make the virtual environment path absolute to avoid issues with relative paths
+	absVenvPath, err := filepath.Abs(venvPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path for venv: %w", err)
 	}
+
+	venvPython := filepath.Join(absVenvPath, "bin", "python")
+	if runtime.GOOS == OSWindows {
+		venvPython = filepath.Join(absVenvPath, "Scripts", "python.exe")
+	}
+
+	// Verify the Python executable exists before proceeding
+	if _, err := os.Stat(venvPython); os.IsNotExist(err) {
+		return fmt.Errorf("virtual environment Python executable not found: %s", venvPython)
+	}
+
+	// Log the Python executable path for debugging
+	logger.Printf("Using Python executable: %s", venvPython)
+	fmt.Printf("Using Python executable: %s\n", venvPython)
 
 	args := []string{
 		"-m", "hivemind_exp.gsm8k.train_single_gpu",
@@ -755,6 +1000,13 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 	}
 
 	cmd := exec.Command(venvPython, args...)
+
+	// Change to the rl-swarm directory before running the command (like the run script does)
+	cmd.Dir = "rl-swarm"
+
+	// Log the working directory for debugging
+	logger.Printf("Working directory: %s", cmd.Dir)
+	fmt.Printf("Working directory: %s\n", cmd.Dir)
 
 	// Capture stdout and stderr to detect identity conflicts using atomic operations
 	var identityConflictDetected atomic.Bool
@@ -820,46 +1072,62 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 }
 
 func cleanupStaleProcesses(logger *log.Logger) {
-	fmt.Println("Cleaning up stale gensyn processes...")
-	logger.Printf("Cleaning up stale gensyn processes")
+	logger.Println("Cleaning up stale processes...")
+	fmt.Println("Cleaning up stale processes...")
 
-	// Kill any existing gensyn processes
-	cmd := exec.Command("pkill", "-f", "gensyn")
-	if err := cmd.Run(); err != nil {
-		// pkill returns error if no processes found, which is fine
-		fmt.Println("No existing gensyn processes found")
-		logger.Printf("No existing gensyn processes found")
-	} else {
-		fmt.Println("Killed existing gensyn processes")
-		logger.Printf("Killed existing gensyn processes")
+	// Clean up modal-login server processes
+	cleanupProcesses([]string{"next-server", "yarn", "node"}, "modal-login server", logger)
+
+	// Clean up Python processes that might be running the training
+	cleanupProcesses([]string{"python", "hivemind_exp"}, "Python training processes", logger)
+
+	// Clean up any processes using port 3000 (modal-login server)
+	cleanupPortProcesses(3000, "modal-login server on port 3000", logger)
+}
+
+func cleanupProcesses(processNames []string, description string, logger *log.Logger) {
+	for _, processName := range processNames {
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case OSDarwin, OSLinux:
+			// Use pgrep to find processes and pkill to kill them
+			cmd = exec.Command("pkill", "-f", processName)
+		case OSWindows:
+			cmd = exec.Command("taskkill", "/F", "/IM", processName+".exe")
+		default:
+			logger.Printf("Unsupported OS for process cleanup: %s", runtime.GOOS)
+			continue
+		}
+
+		if err := cmd.Run(); err != nil {
+			// It's okay if no processes were found to kill
+			logger.Printf("No %s processes found to clean up", description)
+		} else {
+			logger.Printf("Cleaned up %s processes", description)
+			fmt.Printf("Cleaned up %s processes\n", description)
+		}
+	}
+}
+
+func cleanupPortProcesses(port int, description string, logger *log.Logger) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case OSDarwin, OSLinux:
+		// Find processes using the port and kill them
+		cmd = exec.Command("sh", "-c", fmt.Sprintf("lsof -ti:%d | xargs kill -9", port))
+	case OSWindows:
+		cmd = exec.Command("cmd", "/C", fmt.Sprintf("netstat -ano | findstr :%d | findstr LISTENING", port))
+	default:
+		logger.Printf("Unsupported OS for port cleanup: %s", runtime.GOOS)
+		return
 	}
 
-	// Also try to kill hivemind processes
-	cmd = exec.Command("pkill", "-f", "hivemind")
 	if err := cmd.Run(); err != nil {
-		fmt.Println("No existing hivemind processes found")
-		logger.Printf("No existing hivemind processes found")
+		// It's okay if no processes were found to kill
+		logger.Printf("No %s found to clean up", description)
 	} else {
-		fmt.Println("Killed existing hivemind processes")
-		logger.Printf("Killed existing hivemind processes")
-	}
-
-	// Wait a moment for processes to fully terminate
-	time.Sleep(2 * time.Second)
-
-	// Check for any remaining processes
-	cmd = exec.Command("pgrep", "-f", "gensyn")
-	if err := cmd.Run(); err == nil {
-		// Still have processes, try force kill
-		fmt.Println("Force killing remaining gensyn processes...")
-		logger.Printf("Force killing remaining gensyn processes")
-		if err := exec.Command("pkill", "-9", "-f", "gensyn").Run(); err != nil {
-			logger.Printf("Failed to force kill gensyn processes: %v", err)
-		}
-		if err := exec.Command("pkill", "-9", "-f", "hivemind").Run(); err != nil {
-			logger.Printf("Failed to force kill hivemind processes: %v", err)
-		}
-		time.Sleep(1 * time.Second)
+		logger.Printf("Cleaned up %s", description)
+		fmt.Printf("Cleaned up %s\n", description)
 	}
 }
 
@@ -907,9 +1175,10 @@ func configure(c *cli.Context) (Configuration, error) {
 	// Build configuration from CLI context
 	config := getConfiguration(c)
 
-	// Prompt for missing configuration if in interactive mode
-	if c.Bool("interactive") || !c.IsSet("testnet") {
-		config = promptForMissingConfiguration(config)
+	// Always prompt for missing configuration in interactive mode
+	// (when not all required flags are provided)
+	if c.Bool("interactive") || !hasAllRequiredFlags(c) {
+		config = promptForMissingConfiguration(config, c)
 	}
 
 	// Validate configuration
@@ -918,6 +1187,7 @@ func configure(c *cli.Context) (Configuration, error) {
 	}
 
 	// Handle modal login if connecting to testnet but no org-id
+	// This happens AFTER prompts so we have the correct contract address
 	if config.ConnectToTestnet && config.OrgID == "" {
 		orgID, err := setupModalLogin(config)
 		if err != nil {
@@ -927,6 +1197,33 @@ func configure(c *cli.Context) (Configuration, error) {
 	}
 
 	return config, nil
+}
+
+// hasAllRequiredFlags checks if all required flags are provided
+func hasAllRequiredFlags(c *cli.Context) bool {
+	// If help is requested, consider all flags as "provided" to avoid prompting
+	if c.Bool("help") || c.Bool("h") {
+		return true
+	}
+
+	// Check if the most critical flags are explicitly provided
+	// We only require model-size and hf-token to be provided
+	// Other flags can have sensible defaults
+
+	// Check if model-size was explicitly provided (not just using default)
+	modelSizeProvided := c.IsSet("model-size")
+
+	// Check if hf-token was provided
+	hfTokenProvided := c.String("hf-token") != ""
+
+	// For testnet mode, we also need org-id
+	if c.Bool("testnet") {
+		orgIDProvided := c.String("org-id") != ""
+		return modelSizeProvided && hfTokenProvided && orgIDProvided
+	}
+
+	// For mainnet mode, just model-size and hf-token are sufficient
+	return modelSizeProvided && hfTokenProvided
 }
 
 // validateConfiguration validates the configuration
