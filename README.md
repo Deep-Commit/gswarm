@@ -1,4 +1,4 @@
-# Gensyn RL Swarm Supervisor
+# GSwarm - Gensyn RL Swarm Supervisor
 
 > **⚠️ Important Notice: This is a third-party application**
 > 
