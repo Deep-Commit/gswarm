@@ -33,13 +33,7 @@ var errorMarkers = []string{
 	"Error:",
 	"Exception:",
 	"Traceback:",
-	"Identity from",
 	"is already taken by another user",
-	"already taken",
-	"identity conflict",
-	"duplicate identity",
-	"is not used by other peers",
-	"identity already in use",
 }
 
 // Configuration holds all the settings for the RL Swarm
