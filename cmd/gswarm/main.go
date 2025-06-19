@@ -988,6 +988,7 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 		"--identity_path", config.IdentityPath,
 		"--config", config.ConfigPath,
 		"--game", config.Game,
+		"--param_b", config.ParamB,
 	}
 
 	if config.ConnectToTestnet && config.OrgID != "" {
