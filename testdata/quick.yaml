@@ -1,0 +1,14 @@
+# Minimal test configuration for integration testing
+model:
+  name: "test-model"
+  size: 0.5B
+  dtype: "float16"
+
+training:
+  batch_size: 1
+  max_steps: 1
+  learning_rate: 1e-4
+
+data:
+  dataset: "test"
+  max_samples: 1 

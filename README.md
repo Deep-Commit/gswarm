@@ -76,60 +76,89 @@ gswarm
 You can provide all configuration via command line flags for non-interactive operation:
 
 ```bash
-gswarm -config config.yaml -hf_token YOUR_TOKEN -identity_path identity.pem -org_id YOUR_ORG_ID -contract_address 0x... -game chess
+gswarm --config config.yaml --hf-token YOUR_TOKEN --identity-path identity.pem --org-id YOUR_ORG_ID --contract-address 0x... --game gsm8k
 
-gswarm -requirements requirements-cpu.txt
+gswarm --requirements requirements-cpu.txt
 
-gswarm -model-size 32 -big-swarm -org_id YOUR_ORG_ID
+gswarm --model-size 32 --big-swarm --org-id YOUR_ORG_ID
+```
+
+### Beautiful CLI Help
+
+GSwarm features a beautiful, comprehensive help system:
+
+```bash
+# Show main help
+gswarm --help
+
+# Show version information
+gswarm version
+
+# Show help for specific command
+gswarm help version
 ```
 
 ### Command Line Options
 
-| Flag | Description | Default | Required |
-|------|-------------|---------|----------|
-| `-hf_token` | HuggingFace token | | No |
-| `-org_id` | Organization ID | | No |
-| `-identity_path` | Identity PEM path | `swarm.pem` | No |
-| `-contract_address` | Contract address | Auto-detected | No |
-| `-game` | Game type | Auto-detected | No |
-| `-config` | Config file path | Auto-detected | No |
-| `-requirements` | Requirements file path | | No |
-| `-model-size` | Model size in billions (0.5, 1.5, 7, 32, 72) | `0.5` | No |
-| `-big-swarm` | Use big swarm (Math Hard) instead of small swarm (Math) | `false` | No |
-| `-cpu-only` | Force CPU-only mode | `true` | No |
+| Flag | Description | Default | Environment Variable |
+|------|-------------|---------|---------------------|
+| `--testnet` | Connect to the Testnet | `false` | `GSWARM_TESTNET` |
+| `--big-swarm` | Use big swarm (Math Hard) instead of small swarm (Math) | `false` | `GSWARM_BIG_SWARM` |
+| `--model-size` | Parameter count in billions (0.5, 1.5, 7, 32, 72) | `0.5` | `GSWARM_MODEL_SIZE` |
+| `--hf-token` | HuggingFace access token for model pushing | | `HUGGINGFACE_ACCESS_TOKEN`, `GSWARM_HF_TOKEN` |
+| `--org-id` | Modal ORG_ID (required for testnet) | | `GSWARM_ORG_ID` |
+| `--identity-path` | Path to identity PEM file | `swarm.pem` | `GSWARM_IDENTITY_PATH` |
+| `--contract-address` | Override smart contract address | Auto-detected | `GSWARM_CONTRACT_ADDRESS` |
+| `--game` | Game type ('gsm8k' or 'dapo') | Auto-detected | `GSWARM_GAME` |
+| `--config-path` | Path to YAML config file | Auto-detected | `GSWARM_CONFIG_PATH` |
+| `--cpu-only` | Force CPU-only mode | `false` | `GSWARM_CPU_ONLY` |
+| `--requirements` | Requirements file path (overrides default) | | `GSWARM_REQUIREMENTS` |
+| `--interactive` | Force interactive mode (prompt for all options) | `false` | `GSWARM_INTERACTIVE` |
+
+### Environment Variables
+
+All flags can be set via environment variables with the `GSWARM_` prefix:
+
+```bash
+export GSWARM_TESTNET=true
+export GSWARM_MODEL_SIZE=7
+export GSWARM_ORG_ID=your-org-id
+export HUGGINGFACE_ACCESS_TOKEN=your-token
+gswarm
+```
 
 ### HuggingFace Token Handling
 
 The supervisor intelligently handles HuggingFace tokens:
 
-- **If provided via `-hf_token`**: Uses the provided token without prompting
+- **If provided via `--hf-token`**: Uses the provided token without prompting
 - **If not provided**: Prompts interactively asking if you want to push models to HuggingFace Hub
 
 ```bash
 # No prompt for HF token (provided via command line)
-gswarm -hf_token YOUR_TOKEN -org_id YOUR_ORG_ID
+gswarm --hf-token YOUR_TOKEN --org-id YOUR_ORG_ID
 
 # Will prompt for HF token (not provided)
-gswarm -org_id YOUR_ORG_ID
+gswarm --org-id YOUR_ORG_ID
 ```
 
 ### Non-Interactive Mode Examples
 
 ```bash
 gswarm \
-  -org_id YOUR_ORG_ID \
-  -identity_path /path/to/identity.pem \
-  -hf_token YOUR_HF_TOKEN \
-  -model-size 7 \
-  -big-swarm \
-  -cpu-only
+  --org-id YOUR_ORG_ID \
+  --identity-path /path/to/identity.pem \
+  --hf-token YOUR_HF_TOKEN \
+  --model-size 7 \
+  --big-swarm \
+  --cpu-only
 
 gswarm \
-  -org_id YOUR_ORG_ID \
-  -identity_path /path/to/identity.pem \
-  -hf_token YOUR_HF_TOKEN \
-  -model-size 0.5 \
-  -cpu-only
+  --org-id YOUR_ORG_ID \
+  --identity-path /path/to/identity.pem \
+  --hf-token YOUR_HF_TOKEN \
+  --model-size 0.5 \
+  --cpu-only
 ```
 
 **Key Benefits of Non-Interactive Mode:**
@@ -138,24 +167,23 @@ gswarm \
 - Consistent configuration across runs
 - Faster startup time
 
-**Environment Variables Set Automatically:**
-- `CONNECT_TO_TESTNET=true` (when ORG_ID is provided)
-- `GAME=gsm8k` (small swarm) or `GAME=dapo` (big swarm)
-- `USE_BIG_SWARM=true/false`
-- `PARAM_B=<model-size>`
-- `CPU_ONLY=true/false`
-- `HUGGINGFACE_ACCESS_TOKEN=` (empty to skip prompts)
-- `PUB_MULTI_ADDRS=` (empty to use defaults)
-
 ### Examples
 
 ```bash
-gswarm -config config.yaml
-gswarm -requirements requirements-gpu.txt
-gswarm -model-size 32 -big-swarm -org_id YOUR_ORG_ID
-gswarm -game chess -org_id YOUR_ORG_ID
-gswarm -hf_token YOUR_TOKEN -org_id YOUR_ORG_ID
-gswarm -org_id YOUR_ORG_ID
+# Interactive mode (default)
+gswarm
+
+# Non-interactive mode with all options
+gswarm --testnet --big-swarm --model-size 7 --org-id YOUR_ORG_ID --hf-token YOUR_TOKEN
+
+# CPU-only mode
+gswarm --cpu-only --model-size 0.5
+
+# Custom requirements file
+gswarm --requirements requirements-gpu.txt
+
+# Show version
+gswarm version
 ```
 
 ## 🔧 How It Works
@@ -241,8 +269,16 @@ make lint
    - Reinstall with: `go install github.com/Deep-Commit/gswarm/cmd/gswarm@latest`
 
 5. **"HF token prompt appears when not expected"**
-   - Use `-hf_token YOUR_TOKEN` to provide the token via command line
+   - Use `--hf-token YOUR_TOKEN` to provide the token via command line
    - The prompt only appears when no token is provided
+
+6. **"Invalid model-size value"**
+   - Use one of the valid values: `0.5`, `1.5`, `7`, `32`, `72`
+   - Example: `gswarm --model-size 7`
+
+7. **"Invalid game type"**
+   - Use either `gsm8k` or `dapo` for the game parameter
+   - Example: `gswarm --game gsm8k`
 
 ### Debug Mode
 

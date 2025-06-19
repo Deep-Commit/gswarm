@@ -4,11 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,8 +13,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/urfave/cli/v2"
 )
 
 // Version information
@@ -25,6 +25,30 @@ var (
 	Version   = "1.0.0"
 	BuildDate = "unknown"
 	GitCommit = "unknown"
+)
+
+// Constants
+const (
+	venvName = "gswarm-venv"
+
+	DefaultPublicMaddr = "/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ"
+	DefaultPeerMaddr   = "/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ"
+	DefaultHostMaddr   = "/ip4/0.0.0.0/tcp/38331"
+	SmallSwarmContract = "0x69C6e1D608ec64885E7b185d39b04B491a71768C"
+	BigSwarmContract   = "0x6947c6E196a48B77eFa9331EC1E3e45f3Ee5Fd58"
+
+	// OS constants
+	OSDarwin  = "darwin"
+	OSLinux   = "linux"
+	OSWindows = "windows"
+
+	// Game constants
+	GameDapo  = "dapo"
+	GameGSM8K = "gsm8k"
+
+	// Response constants
+	ResponseNone = "None"
+	ResponseYes  = "yes"
 )
 
 var errorMarkers = []string{
@@ -51,15 +75,8 @@ type Configuration struct {
 	PublicMaddr      string
 	PeerMaddr        string
 	HostMaddr        string
+	RequirementsFile string
 }
-
-// Default values
-const (
-	DefaultPeerMaddr   = "/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ"
-	DefaultHostMaddr   = "/ip4/0.0.0.0/tcp/38331"
-	SmallSwarmContract = "0x69C6e1D608ec64885E7b185d39b04B491a71768C"
-	BigSwarmContract   = "0x6947c6E196a48B77eFa9331EC1E3e45f3Ee5Fd58"
-)
 
 func printBanner() {
 	banner := `
@@ -75,33 +92,182 @@ func printBanner() {
 	fmt.Println("\033[0m")
 }
 
-func checkPythonVersion() error {
-	cmd := exec.Command("python3", "--version")
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("python3 not found: %v", err)
+// ensureRepo ensures we're in the correct repository
+func ensureRepo() error {
+	if _, err := os.Stat("go.mod"); os.IsNotExist(err) {
+		fmt.Println("Not in RL-Swarm repository. Cloning...")
+
+		// Check if git is available
+		if err := checkGit(); err != nil {
+			if err := installGit(); err != nil {
+				return fmt.Errorf("failed to install git: %w", err)
+			}
+		}
+
+		cmd := exec.Command("git", "clone", "https://github.com/gensyn-ai/rl-swarm.git")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to clone rl-swarm: %w", err)
+		}
+
+		if err := os.Chdir("rl-swarm"); err != nil {
+			return fmt.Errorf("failed to change to rl-swarm directory: %w", err)
+		}
+		fmt.Println("Successfully cloned and entered RL-Swarm repository")
+	}
+	return nil
+}
+
+func checkGit() error {
+	cmd := exec.Command("git", "--version")
+	return cmd.Run()
+}
+
+func installGit() error {
+	fmt.Println("Git not found. Installing...")
+
+	switch runtime.GOOS {
+	case OSDarwin:
+		cmd := exec.Command("brew", "install", "git")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	case OSLinux:
+		cmd := exec.Command("sudo", "apt-get", "update")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to update package list: %w", err)
+		}
+
+		cmd = exec.Command("sudo", "apt-get", "install", "-y", "git")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	default:
+		return fmt.Errorf("unsupported OS for git installation: %s", runtime.GOOS)
+	}
+}
+
+// ensureVenv ensures the Python virtual environment exists and is properly set up
+func ensureVenv() (string, error) {
+	venvPath := venvName
+
+	// Check if venv already exists
+	if _, err := os.Stat(venvPath); os.IsNotExist(err) {
+		fmt.Printf("Creating virtual environment: %s\n", venvPath)
+
+		cmd := exec.Command("python3", "-m", "venv", venvPath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to create virtual environment: %w", err)
+		}
 	}
 
-	version := strings.TrimSpace(string(output))
-	version = strings.TrimPrefix(version, "Python ")
+	// Determine the Python executable path
+	venvPython := filepath.Join(venvPath, "bin", "python")
+	if runtime.GOOS == OSWindows {
+		venvPython = filepath.Join(venvPath, "Scripts", "python.exe")
+	}
 
-	parts := strings.Split(version, ".")
+	// Verify the Python executable exists and works
+	if _, err := os.Stat(venvPython); os.IsNotExist(err) {
+		return "", fmt.Errorf("virtual environment Python executable not found: %s", venvPython)
+	}
+
+	// Upgrade pip in the virtual environment
+	fmt.Println("Upgrading pip in virtual environment...")
+	cmd := exec.Command(venvPython, "-m", "pip", "install", "--upgrade", "pip")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to upgrade pip: %w", err)
+	}
+
+	return venvPath, nil
+}
+
+func checkPythonVersion() error {
+	// Check if python3 is available
+	cmd := exec.Command("python3", "--version")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("python3 not found: %w", err)
+	}
+
+	// Get Python version
+	cmd = exec.Command("python3", "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get Python version: %w", err)
+	}
+
+	versionStr := strings.TrimSpace(string(output))
+	parts := strings.Split(versionStr, ".")
 	if len(parts) < 2 {
-		return fmt.Errorf("unable to parse Python version: %s", version)
+		return fmt.Errorf("invalid Python version format: %s", versionStr)
 	}
 
 	major, err := strconv.Atoi(parts[0])
 	if err != nil {
-		return fmt.Errorf("unable to parse major version: %v", err)
+		return fmt.Errorf("unable to parse major version: %w", err)
 	}
 
 	minor, err := strconv.Atoi(parts[1])
 	if err != nil {
-		return fmt.Errorf("unable to parse minor version: %v", err)
+		return fmt.Errorf("unable to parse minor version: %w", err)
 	}
 
 	if major < 3 || (major == 3 && minor < 10) {
-		return fmt.Errorf("Python 3.10+ required, found %s", version)
+		return fmt.Errorf("python 3.10+ required, found %s", versionStr)
+	}
+
+	return nil
+}
+
+func checkNpm() error {
+	cmd := exec.Command("npm", "--version")
+	return cmd.Run()
+}
+
+func ensureNodeAndNpm() error {
+	// Check if both node and npm are available
+	nodeErr := checkNodeJS()
+	npmErr := checkNpm()
+
+	if nodeErr != nil || npmErr != nil {
+		fmt.Println("Node.js or npm not found. Installing via NVM...")
+
+		// Install NVM
+		fmt.Println("Installing NVM...")
+		cmd := exec.Command("bash", "-c", "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install NVM: %w", err)
+		}
+
+		// Source NVM and install Node.js
+		fmt.Println("Installing Node.js via NVM...")
+		cmd = exec.Command("bash", "-c", "source ~/.nvm/nvm.sh && nvm install 18 && nvm use 18")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install Node.js via NVM: %w", err)
+		}
+
+		// Verify Node.js installation
+		cmd = exec.Command("bash", "-c", "source ~/.nvm/nvm.sh && node --version")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("node.js installation verification failed: %w", err)
+		}
+
+		// Verify npm installation
+		cmd = exec.Command("bash", "-c", "source ~/.nvm/nvm.sh && npm --version")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("npm installation verification failed: %w", err)
+		}
 	}
 
 	return nil
@@ -110,36 +276,15 @@ func checkPythonVersion() error {
 func checkNodeJS() error {
 	cmd := exec.Command("node", "--version")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Node.js not found: %v", err)
+		return fmt.Errorf("node.js not found: %w", err)
 	}
 	return nil
-}
-
-func installNodeJS() error {
-	fmt.Println("Node.js not found. Installing NVM and latest Node.js...")
-
-	// Install NVM
-	nvmDir := filepath.Join(os.Getenv("HOME"), ".nvm")
-	if _, err := os.Stat(nvmDir); os.IsNotExist(err) {
-		cmd := exec.Command("bash", "-c", "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to install NVM: %v", err)
-		}
-	}
-
-	// Source NVM and install Node.js
-	cmd := exec.Command("bash", "-c", "source ~/.nvm/nvm.sh && nvm install node")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func checkYarn() error {
 	cmd := exec.Command("yarn", "--version")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Yarn not found: %v", err)
+		return fmt.Errorf("yarn not found: %w", err)
 	}
 	return nil
 }
@@ -151,7 +296,7 @@ func installYarn() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Use npm with network-friendly options
+	// Use npm with network-friendly options and proper shell sourcing
 	cmd := exec.CommandContext(ctx, "bash", "-lc", "source ~/.nvm/nvm.sh && npm install -g yarn --silent")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -177,7 +322,7 @@ func installYarn() error {
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
 				if err := cmd.Run(); err != nil {
-					return fmt.Errorf("failed to install Yarn via Homebrew or corepack: %v", err)
+					return fmt.Errorf("failed to install yarn via Homebrew or corepack: %w", err)
 				}
 			}
 		case "linux":
@@ -189,7 +334,8 @@ func installYarn() error {
 				set -e
 				echo "Adding Yarn repository..."
 				curl -fsSL https://dl.yarnpkg.com/debian/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/yarnkey.gpg
-				echo "deb [signed-by=/usr/share/keyrings/yarnkey.gpg] https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
+				echo "deb [signed-by=/usr/share/keyrings/yarnkey.gpg] https://dl.yarnpkg.com/debian/ stable main" | \
+					sudo tee /etc/apt/sources.list.d/yarn.list
 				echo "Updating package list..."
 				sudo apt update -qq
 				echo "Installing Yarn..."
@@ -199,247 +345,101 @@ func installYarn() error {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				// Try corepack as fallback
-				fmt.Println("apt failed, trying corepack...")
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				defer cancel()
-				cmd = exec.CommandContext(ctx, "bash", "-lc", "source ~/.nvm/nvm.sh && corepack enable")
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					return fmt.Errorf("failed to install Yarn via apt or corepack: %v", err)
-				}
-			}
-		case "windows":
-			// Windows - try chocolatey first, then winget
-			fmt.Println("Trying Chocolatey installation...")
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			defer cancel()
-			cmd = exec.CommandContext(ctx, "powershell", "-Command", "choco install yarn -y")
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fmt.Println("Chocolatey failed, trying winget...")
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-				defer cancel()
-				cmd = exec.CommandContext(ctx, "winget", "install", "Yarn.Yarn", "--silent")
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					// Try corepack as last resort
-					fmt.Println("winget failed, trying corepack...")
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-					defer cancel()
-					cmd = exec.CommandContext(ctx, "powershell", "-Command", "corepack enable")
-					cmd.Stdout = os.Stdout
-					cmd.Stderr = os.Stderr
-					if err := cmd.Run(); err != nil {
-						return fmt.Errorf("failed to install Yarn via Windows package managers or corepack: %v", err)
-					}
-				}
+				return fmt.Errorf("failed to install yarn via apt: %w", err)
 			}
 		default:
-			return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+			return fmt.Errorf("unsupported OS for yarn installation: %s", runtime.GOOS)
 		}
 	}
 
 	// Verify installation
-	fmt.Println("Verifying Yarn installation...")
 	if err := checkYarn(); err != nil {
-		return fmt.Errorf("Yarn installation verification failed: %v", err)
+		return fmt.Errorf("yarn installation verification failed: %w", err)
 	}
 
-	fmt.Println("Yarn installed successfully!")
 	return nil
 }
 
-func setupModalLogin(config Configuration) (string, error) {
-	fmt.Println("Please login to create an Ethereum Server Wallet")
+func setupModalLogin(_ Configuration) (string, error) {
+	fmt.Println("\n=== Modal Login Setup ===")
+	fmt.Println("To connect to the testnet, you need to authenticate with Modal.")
+	fmt.Println("This will open your browser to complete the login process.")
 
-	// Check and install Node.js if needed
-	if err := checkNodeJS(); err != nil {
-		if err := installNodeJS(); err != nil {
-			return "", fmt.Errorf("failed to install Node.js: %v", err)
-		}
-	} else {
-		cmd := exec.Command("node", "--version")
-		output, _ := cmd.Output()
-		fmt.Printf("Node.js is already installed: %s", string(output))
-	}
+	// Check if modal CLI is available
+	cmd := exec.Command("modal", "token", "new")
+	if err := cmd.Run(); err != nil {
+		fmt.Println("Modal CLI not found. Installing...")
 
-	// Check and install Yarn if needed
-	if err := checkYarn(); err != nil {
-		if err := installYarn(); err != nil {
-			return "", fmt.Errorf("failed to install Yarn: %v", err)
+		// Install modal CLI
+		installCmd := exec.Command("pip", "install", "modal")
+		installCmd.Stdout = os.Stdout
+		installCmd.Stderr = os.Stderr
+		if err := installCmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to install modal CLI: %w", err)
 		}
 	}
 
-	// Change to modal-login directory
-	if err := os.Chdir("modal-login"); err != nil {
-		return "", fmt.Errorf("failed to change to modal-login directory: %v", err)
-	}
-	defer os.Chdir("..")
-
-	// Update .env file with contract address
-	envFile := ".env"
-	envContent, err := os.ReadFile(envFile)
+	// Get the login URL
+	cmd = exec.Command("modal", "token", "new", "--json")
+	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("failed to read .env file: %v", err)
+		return "", fmt.Errorf("failed to get modal login URL: %w", err)
 	}
 
-	lines := strings.Split(string(envContent), "\n")
-	if len(lines) >= 3 {
-		lines[2] = fmt.Sprintf("SMART_CONTRACT_ADDRESS=%s", config.ContractAddress)
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return "", fmt.Errorf("failed to parse modal response: %w", err)
 	}
 
-	if err := os.WriteFile(envFile, []byte(strings.Join(lines, "\n")), 0644); err != nil {
-		return "", fmt.Errorf("failed to update .env file: %v", err)
+	fmt.Printf("Opening browser to: %s\n", result.URL)
+	openBrowser(result.URL)
+
+	// Wait for user to complete login
+	fmt.Println("Please complete the login in your browser, then press Enter here...")
+	if _, err := fmt.Scanln(); err != nil {
+		return "", fmt.Errorf("failed to read user input: %w", err)
 	}
 
-	// Install dependencies
-	fmt.Println("Installing dependencies...")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "yarn", "install", "--immutable")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install dependencies: %v", err)
+	// Get the token
+	cmd = exec.Command("modal", "token", "current", "--json")
+	output, err = cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current modal token: %w", err)
 	}
 
-	// Build the project
-	fmt.Println("Building server...")
-	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	cmd = exec.CommandContext(ctx, "yarn", "build")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to build server: %v", err)
+	var tokenResult struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(output, &tokenResult); err != nil {
+		return "", fmt.Errorf("failed to parse modal token response: %w", err)
 	}
 
-	// Start the server in background
-	fmt.Println("Starting modal login server...")
-	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd = exec.CommandContext(ctx, "yarn", "start")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("failed to start server: %v", err)
+	if tokenResult.Token == "" {
+		return "", fmt.Errorf("no modal token found after login")
 	}
 
-	serverPID := cmd.Process.Pid
-	fmt.Printf("Started server process: %d\n", serverPID)
-
-	// Wait a bit for server to start
-	time.Sleep(5 * time.Second)
-
-	// Try to open browser
-	fmt.Println("Opening browser to http://localhost:3000...")
-	openBrowser("http://localhost:3000")
-
-	// Wait for userData.json to be created
-	fmt.Println("Waiting for modal userData.json to be created...")
-	userDataPath := "temp-data/userData.json"
-	for {
-		if _, err := os.Stat(userDataPath); err == nil {
-			break
-		}
-		time.Sleep(5 * time.Second)
-	}
-	fmt.Println("Found userData.json. Proceeding...")
-
-	// Wait for userData.json to contain actual data (not just empty braces)
-	fmt.Println("Waiting for userData.json to contain login data...")
-	var orgID string
-	maxWaitTime := 10 * time.Minute // Wait up to 10 minutes for user to complete login
-	startTime := time.Now()
-
-	for time.Since(startTime) < maxWaitTime {
-		userData, err := os.ReadFile(userDataPath)
-		if err != nil {
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		// Try to parse as JSON first
-		var userDataMap map[string]interface{}
-		if err := json.Unmarshal(userData, &userDataMap); err == nil {
-			// Look for org_id, orgId, organization_id, etc.
-			for key, value := range userDataMap {
-				keyLower := strings.ToLower(key)
-				if strings.Contains(keyLower, "org") && strings.Contains(keyLower, "id") {
-					if str, ok := value.(string); ok && str != "" {
-						orgID = str
-						break
-					}
-				}
-			}
-		}
-
-		// If JSON parsing didn't work, try the awk-like approach
-		if orgID == "" {
-			lines := strings.Split(string(userData), "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				// Skip empty lines and lines that are just braces
-				if line == "" || line == "{" || line == "}" || strings.HasPrefix(line, "{") || strings.HasPrefix(line, "}") {
-					continue
-				}
-
-				// Split by quotes and look for potential org ID
-				parts := strings.Split(line, "\"")
-				if len(parts) >= 3 {
-					// The bash script uses $(NF - 1) which is the second-to-last field
-					potentialID := parts[len(parts)-2]
-					if potentialID != "" && !strings.Contains(potentialID, "{") && !strings.Contains(potentialID, "}") {
-						// Basic validation - should be a reasonable length and not contain obvious non-ID characters
-						if len(potentialID) > 5 && len(potentialID) < 100 {
-							orgID = potentialID
-							break
-						}
-					}
-				}
-			}
-		}
-
-		if orgID != "" {
-			break
-		}
-
-		fmt.Println("Waiting for user to complete login...")
-		time.Sleep(5 * time.Second)
+	// Get the org ID
+	cmd = exec.Command("modal", "org", "current", "--json")
+	output, err = cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current modal org: %w", err)
 	}
 
-	if orgID == "" {
-		return "", fmt.Errorf("failed to extract ORG_ID from userData.json after waiting for user login")
+	var orgResult struct {
+		OrgID string `json:"org_id"`
+	}
+	if err := json.Unmarshal(output, &orgResult); err != nil {
+		return "", fmt.Errorf("failed to parse modal org response: %w", err)
 	}
 
-	fmt.Printf("Your ORG_ID is set to: %s\n", orgID)
-
-	// Wait for API key to be activated
-	fmt.Println("Waiting for API key to become activated...")
-	for {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:3000/api/get-api-key-status?orgId=%s", orgID))
-		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if strings.TrimSpace(string(body)) == "activated" {
-				fmt.Println("API key is activated! Proceeding...")
-				break
-			}
-		}
-		fmt.Println("Waiting for API key to be activated...")
-		time.Sleep(5 * time.Second)
+	if orgResult.OrgID == "" {
+		return "", fmt.Errorf("no modal org ID found after login")
 	}
 
-	// Kill the server
-	if cmd.Process != nil {
-		cmd.Process.Kill()
-	}
-
-	return orgID, nil
+	fmt.Printf("Successfully authenticated with Modal (Org ID: %s)\n", orgResult.OrgID)
+	return orgResult.OrgID, nil
 }
 
 func openBrowser(url string) {
@@ -450,74 +450,42 @@ func openBrowser(url string) {
 	case "linux":
 		cmd = exec.Command("xdg-open", url)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	default:
-		fmt.Printf("Please open %s manually in your browser\n", url)
+		fmt.Printf("Please open this URL in your browser: %s\n", url)
 		return
 	}
-
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("Failed to open %s. Please open it manually.\n", url)
-	} else {
-		fmt.Printf("Successfully opened %s in your default browser.\n", url)
+		fmt.Printf("Failed to open browser: %v\n", err)
+		fmt.Printf("Please open this URL manually: %s\n", url)
 	}
 }
 
-func installRequirements(venvPath string, requirementsFile string, logger *log.Logger) error {
+func installRequirements(venvPath string, requirementsFile string, _ *log.Logger) error {
 	venvPython := filepath.Join(venvPath, "bin", "python")
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == OSWindows {
 		venvPython = filepath.Join(venvPath, "Scripts", "python.exe")
 	}
 
-	// Create virtual environment if it doesn't exist
-	if _, err := os.Stat(venvPath); os.IsNotExist(err) {
-		fmt.Println("Creating virtual environment...")
-		cmd := exec.Command("python3", "-m", "venv", venvPath)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to create virtual environment: %v", err)
-		}
-	}
-
-	// Upgrade pip
-	fmt.Println("Upgrading pip...")
-	cmd := exec.Command(venvPython, "-m", "pip", "install", "--upgrade", "pip")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to upgrade pip: %v", err)
-	}
-
-	// Determine requirements file based on CPU/GPU
-	reqFile := "requirements.txt"
-	if requirementsFile != "" {
-		reqFile = requirementsFile
-	} else {
-		if isCPUOnly() {
-			reqFile = "requirements-cpu.txt"
+	// Determine which requirements file to use
+	if requirementsFile == "" {
+		// Check for requirements.txt in current directory
+		if _, err := os.Stat("requirements.txt"); err == nil {
+			requirementsFile = "requirements.txt"
 		} else {
-			reqFile = "requirements-gpu.txt"
+			// Use default requirements
+			requirementsFile = "requirements.txt"
 		}
 	}
 
-	fmt.Printf("Installing requirements from %s...\n", reqFile)
-	cmd = exec.Command(venvPython, "-m", "pip", "install", "-r", reqFile)
+	fmt.Printf("Installing requirements from %s...\n", requirementsFile)
+
+	// Install requirements
+	cmd := exec.Command(venvPython, "-m", "pip", "install", "-r", requirementsFile)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to install requirements: %v", err)
-	}
-
-	// Install flash-attn if not CPU-only
-	if !isCPUOnly() {
-		fmt.Println("Installing flash-attn...")
-		cmd = exec.Command(venvPython, "-m", "pip", "install", "flash-attn", "--no-build-isolation")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			logger.Printf("Warning: failed to install flash-attn: %v", err)
-		}
+		return fmt.Errorf("failed to install requirements: %w", err)
 	}
 
 	return nil
@@ -530,161 +498,220 @@ func isCPUOnly() bool {
 }
 
 func getConfigPath(paramB string, useBigSwarm bool) string {
-	basePath := "hivemind_exp/configs"
-
-	if isCPUOnly() {
-		// CPU-only mode
-		return filepath.Join(basePath, "mac", "grpo-qwen-2.5-0.5b-deepseek-r1.yaml")
-	}
-
-	// GPU mode
+	baseDir := "configs"
 	if useBigSwarm {
-		basePath = filepath.Join(basePath, "gpu")
-		switch paramB {
-		case "32", "72":
-			return filepath.Join(basePath, fmt.Sprintf("grpo-qwen-2.5-%sb-bnb-4bit-deepseek-r1.yaml", paramB))
-		case "0.5", "1.5", "7":
-			return filepath.Join(basePath, fmt.Sprintf("grpo-qwen-2.5-%sb-deepseek-r1.yaml", paramB))
-		}
+		baseDir = filepath.Join(baseDir, "big_swarm")
 	} else {
-		switch paramB {
-		case "32", "72":
-			return filepath.Join(basePath, "gpu", fmt.Sprintf("grpo-qwen-2.5-%sb-bnb-4bit-deepseek-r1.yaml", paramB))
-		case "0.5", "1.5", "7":
-			return filepath.Join(basePath, "gpu", fmt.Sprintf("grpo-qwen-2.5-%sb-deepseek-r1.yaml", paramB))
-		}
+		baseDir = filepath.Join(baseDir, "small_swarm")
 	}
-
-	return filepath.Join(basePath, "gpu", "grpo-qwen-2.5-0.5b-deepseek-r1.yaml") // fallback
+	return filepath.Join(baseDir, fmt.Sprintf("%sB.yaml", paramB))
 }
 
 func promptUser(prompt string, defaultValue string, validOptions []string) string {
 	reader := bufio.NewReader(os.Stdin)
 
-	for {
-		fmt.Printf("\033[32m%s [%s]: \033[0m", prompt, defaultValue)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
+	fmt.Printf("\033[32m%s [%s]: \033[0m", prompt, defaultValue)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		// If we can't read from stdin, return default value
+		return defaultValue
+	}
+	input = strings.TrimSpace(input)
 
-		if input == "" {
-			return defaultValue
-		}
+	if input == "" {
+		input = defaultValue
+	}
 
-		// Check if input is valid
+	// Validate against valid options if provided
+	if len(validOptions) > 0 {
+		valid := false
 		for _, option := range validOptions {
-			if strings.EqualFold(input, option) {
-				return input
+			if input == option {
+				valid = true
+				break
 			}
 		}
-
-		fmt.Printf("Please enter one of: %s\n", strings.Join(validOptions, ", "))
+		if !valid {
+			fmt.Printf("Invalid option. Please choose from: %v\n", validOptions)
+			return promptUser(prompt, defaultValue, validOptions)
+		}
 	}
+
+	return input
 }
 
 func promptYesNo(prompt string, defaultValue string) bool {
 	reader := bufio.NewReader(os.Stdin)
 
-	for {
-		fmt.Printf("\033[32m%s [Y/n]: \033[0m", prompt)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
-
-		if input == "" {
-			input = strings.ToLower(defaultValue)
-		}
-
-		if input == "y" || input == "yes" {
-			return true
-		}
-		if input == "n" || input == "no" {
-			return false
-		}
-
-		fmt.Println("Please answer yes or no.")
+	fmt.Printf("\033[32m%s [%s]: \033[0m", prompt, defaultValue)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		// If we can't read from stdin, return default value
+		return strings.ToLower(defaultValue) == "y" || strings.ToLower(defaultValue) == ResponseYes
 	}
+	input = strings.TrimSpace(strings.ToLower(input))
+
+	if input == "" {
+		input = strings.ToLower(defaultValue)
+	}
+
+	return input == "y" || input == "yes"
 }
 
 func promptChoice(prompt string, options map[string]string, defaultValue string) string {
 	reader := bufio.NewReader(os.Stdin)
 
-	for {
-		fmt.Printf("\033[32m%s [%s]: \033[0m", prompt, defaultValue)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToUpper(input))
-
-		if input == "" {
-			input = strings.ToUpper(defaultValue)
-		}
-
-		if option, exists := options[input]; exists {
-			return option
-		}
-
-		fmt.Printf("Please enter one of: %s\n", strings.Join(getKeys(options), ", "))
+	fmt.Printf("\033[32m%s\n", prompt)
+	for key, value := range options {
+		fmt.Printf("  %s: %s\n", key, value)
 	}
+	fmt.Printf("Choice [%s]: \033[0m", defaultValue)
+
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		// If we can't read from stdin, return default value
+		return defaultValue
+	}
+	input = strings.TrimSpace(strings.ToUpper(input))
+
+	if input == "" {
+		input = strings.ToUpper(defaultValue)
+	}
+
+	if value, exists := options[input]; exists {
+		return value
+	}
+
+	fmt.Println("Invalid choice. Please try again.")
+	return promptChoice(prompt, options, defaultValue)
 }
 
-func getKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+// getConfiguration builds a Configuration from CLI context
+func getConfiguration(c *cli.Context) Configuration {
+	cfg := Configuration{
+		PublicMaddr: DefaultPublicMaddr,
+		PeerMaddr:   DefaultPeerMaddr,
+		HostMaddr:   DefaultHostMaddr,
 	}
-	return keys
+
+	// Get values from CLI context
+	cfg.ConnectToTestnet = c.Bool("testnet")
+	cfg.UseBigSwarm = c.Bool("big-swarm")
+	cfg.ParamB = c.String("model-size")
+	cfg.HFToken = c.String("hf-token")
+	cfg.OrgID = c.String("org-id")
+	cfg.IdentityPath = c.String("identity-path")
+	cfg.ContractAddress = c.String("contract-address")
+	cfg.Game = c.String("game")
+	cfg.ConfigPath = c.String("config-path")
+	cfg.CPUOnly = c.Bool("cpu-only")
+	cfg.RequirementsFile = c.String("requirements")
+
+	// Set defaults for unset values
+	if cfg.IdentityPath == "" {
+		cfg.IdentityPath = "swarm.pem"
+	}
+
+	// Set CPUOnly based on flag or detection
+	if !cfg.CPUOnly {
+		cfg.CPUOnly = isCPUOnly()
+	}
+
+	// Set contract address based on swarm type if not provided
+	if cfg.ContractAddress == "" {
+		if cfg.UseBigSwarm {
+			cfg.ContractAddress = BigSwarmContract
+		} else {
+			cfg.ContractAddress = SmallSwarmContract
+		}
+	}
+
+	// Set game type based on swarm type if not provided
+	if cfg.Game == "" {
+		if cfg.UseBigSwarm {
+			cfg.Game = GameDapo
+		} else {
+			cfg.Game = GameGSM8K
+		}
+	}
+
+	// Set config path if not provided
+	if cfg.ConfigPath == "" {
+		cfg.ConfigPath = getConfigPath(cfg.ParamB, cfg.UseBigSwarm)
+	}
+
+	// Force testnet if org-id is provided
+	if cfg.OrgID != "" {
+		cfg.ConnectToTestnet = true
+	}
+
+	return cfg
 }
 
-func getConfiguration() Configuration {
-	fmt.Println("\n=== RL Swarm Configuration ===")
-
-	config := Configuration{
-		PeerMaddr:    DefaultPeerMaddr,
-		HostMaddr:    DefaultHostMaddr,
-		IdentityPath: "swarm.pem",
+// promptForMissingConfiguration prompts for any missing required configuration
+func promptForMissingConfiguration(cfg Configuration) Configuration {
+	// Prompt for testnet if not set
+	if !cfg.ConnectToTestnet {
+		cfg.ConnectToTestnet = promptYesNo("Would you like to connect to the Testnet?", "Y")
 	}
 
-	// Testnet connection
-	config.ConnectToTestnet = promptYesNo("Would you like to connect to the Testnet?", "Y")
-
-	// Swarm selection
-	swarmOptions := map[string]string{
-		"A": "Math (small swarm)",
-		"B": "Math Hard (big swarm)",
-	}
-	swarmChoice := promptChoice("Which swarm would you like to join (Math (A) or Math Hard (B))?", swarmOptions, "A")
-	config.UseBigSwarm = (swarmChoice == "Math Hard (big swarm)")
-
-	// Parameter size
-	paramOptions := []string{"0.5", "1.5", "7", "32", "72"}
-	config.ParamB = promptUser("How many parameters (in billions)? [0.5, 1.5, 7, 32, 72]", "0.5", paramOptions)
-
-	// Set contract address
-	if config.UseBigSwarm {
-		config.ContractAddress = BigSwarmContract
-	} else {
-		config.ContractAddress = SmallSwarmContract
+	// Prompt for big swarm if not set
+	if !cfg.UseBigSwarm {
+		choice := promptChoice(
+			"Which swarm would you like to join (Math (A) or Math Hard (B))?",
+			map[string]string{"A": "Math (small swarm)", "B": "Math Hard (big swarm)"},
+			"A",
+		)
+		cfg.UseBigSwarm = (choice == "Math Hard (big swarm)")
 	}
 
-	// Set game type
-	if config.UseBigSwarm {
-		config.Game = "dapo"
-	} else {
-		config.Game = "gsm8k"
+	// Prompt for model size if not set
+	if cfg.ParamB == "" {
+		cfg.ParamB = promptUser(
+			"How many parameters (in billions)? [0.5,1.5,7,32,72]",
+			"0.5",
+			[]string{"0.5", "1.5", "7", "32", "72"},
+		)
 	}
 
-	// Set config path
-	config.ConfigPath = getConfigPath(config.ParamB, config.UseBigSwarm)
+	// Prompt for HuggingFace token if not set
+	if cfg.HFToken == "" {
+		cfg.HFToken = promptHFToken()
+	}
 
-	// CPU only mode
-	config.CPUOnly = isCPUOnly()
+	// Update derived values based on prompts
+	if cfg.ContractAddress == "" {
+		if cfg.UseBigSwarm {
+			cfg.ContractAddress = BigSwarmContract
+		} else {
+			cfg.ContractAddress = SmallSwarmContract
+		}
+	}
 
-	fmt.Println("=== Configuration Complete ===\n")
-	return config
+	if cfg.Game == "" {
+		if cfg.UseBigSwarm {
+			cfg.Game = GameDapo
+		} else {
+			cfg.Game = GameGSM8K
+		}
+	}
+
+	if cfg.ConfigPath == "" {
+		cfg.ConfigPath = getConfigPath(cfg.ParamB, cfg.UseBigSwarm)
+	}
+
+	return cfg
 }
 
 func promptHFToken() string {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Printf("\033[32mWould you like to push models you train in the RL swarm to the Hugging Face Hub? [y/N]: \033[0m")
-	input, _ := reader.ReadString('\n')
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		// If we can't read from stdin, return "None"
+		return ResponseNone
+	}
 	input = strings.TrimSpace(strings.ToLower(input))
 
 	if input == "" {
@@ -693,16 +720,20 @@ func promptHFToken() string {
 
 	if input == "y" || input == "yes" {
 		fmt.Print("Enter your HuggingFace access token: ")
-		token, _ := reader.ReadString('\n')
+		token, err := reader.ReadString('\n')
+		if err != nil {
+			// If we can't read the token, return "None"
+			return ResponseNone
+		}
 		return strings.TrimSpace(token)
 	}
 
-	return "None"
+	return ResponseNone
 }
 
 func runPythonTraining(config Configuration, venvPath string, logger *log.Logger) error {
 	venvPython := filepath.Join(venvPath, "bin", "python")
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == OSWindows {
 		venvPython = filepath.Join(venvPath, "Scripts", "python.exe")
 	}
 
@@ -725,37 +756,39 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 
 	cmd := exec.Command(venvPython, args...)
 
-	// Capture stdout and stderr to detect identity conflicts
+	// Capture stdout and stderr to detect identity conflicts using atomic operations
+	var identityConflictDetected atomic.Bool
+
+	// Create pipes for stdout and stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %v", err)
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %v", err)
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	cmd.Stdin = os.Stdin
 
 	// Start the command
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start training process: %v", err)
+		return fmt.Errorf("failed to start training process: %w", err)
 	}
 
-	// Monitor output for identity conflicts
-	identityConflictDetected := false
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text()
 			fmt.Println(line) // Still print to console
 
-			// Check for specific identity conflict pattern
-			if strings.Contains(strings.ToLower(line), "identity") &&
-				strings.Contains(strings.ToLower(line), "is already taken by another user") {
-				identityConflictDetected = true
-				logger.Printf("Identity conflict detected in output: %s", line)
-				break
+			// Check for identity conflict patterns
+			for _, marker := range errorMarkers {
+				if strings.Contains(strings.ToLower(line), strings.ToLower(marker)) {
+					identityConflictDetected.Store(true)
+					logger.Printf("Identity conflict detected in stdout: %s", line)
+					break
+				}
 			}
 		}
 	}()
@@ -766,26 +799,27 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 			line := scanner.Text()
 			fmt.Fprintf(os.Stderr, "%s\n", line) // Still print to stderr
 
-			// Check for specific identity conflict pattern in stderr too
-			if strings.Contains(strings.ToLower(line), "identity") &&
-				strings.Contains(strings.ToLower(line), "is already taken by another user") {
-				identityConflictDetected = true
-				logger.Printf("Identity conflict detected in stderr: %s", line)
-				break
+			// Check for identity conflict patterns in stderr too
+			for _, marker := range errorMarkers {
+				if strings.Contains(strings.ToLower(line), strings.ToLower(marker)) {
+					identityConflictDetected.Store(true)
+					logger.Printf("Identity conflict detected in stderr: %s", line)
+					break
+				}
 			}
 		}
 	}()
 
 	err = cmd.Wait()
 
-	if identityConflictDetected {
+	if identityConflictDetected.Load() {
 		return fmt.Errorf("identity conflict detected - need cleanup and retry")
 	}
 
 	return err
 }
 
-func cleanupStaleProcesses(logger *log.Logger) error {
+func cleanupStaleProcesses(logger *log.Logger) {
 	fmt.Println("Cleaning up stale gensyn processes...")
 	logger.Printf("Cleaning up stale gensyn processes")
 
@@ -819,150 +853,124 @@ func cleanupStaleProcesses(logger *log.Logger) error {
 		// Still have processes, try force kill
 		fmt.Println("Force killing remaining gensyn processes...")
 		logger.Printf("Force killing remaining gensyn processes")
-		exec.Command("pkill", "-9", "-f", "gensyn").Run()
-		exec.Command("pkill", "-9", "-f", "hivemind").Run()
+		if err := exec.Command("pkill", "-9", "-f", "gensyn").Run(); err != nil {
+			logger.Printf("Failed to force kill gensyn processes: %v", err)
+		}
+		if err := exec.Command("pkill", "-9", "-f", "hivemind").Run(); err != nil {
+			logger.Printf("Failed to force kill hivemind processes: %v", err)
+		}
 		time.Sleep(1 * time.Second)
+	}
+}
+
+// bootstrapEnv handles all environment setup
+func bootstrapEnv() (string, error) {
+	// Ensure we're in the correct repository
+	if err := ensureRepo(); err != nil {
+		return "", fmt.Errorf("failed to ensure repository: %w", err)
+	}
+
+	// Check Python version
+	fmt.Println("Checking Python version...")
+	if err := checkPythonVersion(); err != nil {
+		return "", fmt.Errorf("python version check failed: %w", err)
+	}
+	fmt.Println("Python version OK")
+
+	// Ensure Node.js and npm are available
+	fmt.Println("Checking Node.js and npm...")
+	if err := ensureNodeAndNpm(); err != nil {
+		return "", fmt.Errorf("node.js/npm setup failed: %w", err)
+	}
+	fmt.Println("Node.js and npm OK")
+
+	// Check for Yarn and install if missing
+	fmt.Println("Checking for Yarn...")
+	if err := checkYarn(); err != nil {
+		if err := installYarn(); err != nil {
+			return "", fmt.Errorf("yarn installation failed: %w", err)
+		}
+	}
+	fmt.Println("Yarn is available.")
+
+	// Ensure virtual environment
+	venvPath, err := ensureVenv()
+	if err != nil {
+		return "", fmt.Errorf("virtual environment setup failed: %w", err)
+	}
+
+	return venvPath, nil
+}
+
+// configure handles CLI parsing and interactive configuration
+func configure(c *cli.Context) (Configuration, error) {
+	// Build configuration from CLI context
+	config := getConfiguration(c)
+
+	// Prompt for missing configuration if in interactive mode
+	if c.Bool("interactive") || !c.IsSet("testnet") {
+		config = promptForMissingConfiguration(config)
+	}
+
+	// Validate configuration
+	if err := validateConfiguration(config); err != nil {
+		return Configuration{}, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	// Handle modal login if connecting to testnet but no org-id
+	if config.ConnectToTestnet && config.OrgID == "" {
+		orgID, err := setupModalLogin(config)
+		if err != nil {
+			return Configuration{}, fmt.Errorf("modal login failed: %w", err)
+		}
+		config.OrgID = orgID
+	}
+
+	return config, nil
+}
+
+// validateConfiguration validates the configuration
+func validateConfiguration(config Configuration) error {
+	// Validate ParamB
+	validParamBs := []string{"0.5", "1.5", "7", "32", "72"}
+	valid := false
+	for _, validParam := range validParamBs {
+		if config.ParamB == validParam {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("invalid paramB: %s (must be one of %v)", config.ParamB, validParamBs)
+	}
+
+	// Validate Game
+	if config.Game != "gsm8k" && config.Game != "dapo" {
+		return fmt.Errorf("invalid game: %s (must be 'gsm8k' or 'dapo')", config.Game)
 	}
 
 	return nil
 }
 
-func main() {
-	// Parse command line flags
-	var hfToken = flag.String("hf_token", "", "HuggingFace token")
-	var orgID = flag.String("org_id", "", "Organization ID")
-	var identityPath = flag.String("identity_path", "", "Identity PEM path")
-	var contractAddress = flag.String("contract_address", "", "Contract address")
-	var game = flag.String("game", "", "Game type")
-	var configPath = flag.String("config", "", "Config file path")
-	var requirementsFile = flag.String("requirements", "", "Requirements file path")
-	var modelSize = flag.String("model-size", "0.5", "Model size in billions")
-	var bigSwarm = flag.Bool("big-swarm", false, "Use big swarm (Math Hard)")
-	var cpuOnly = flag.Bool("cpu-only", true, "Force CPU-only mode")
-	var showVersion = flag.Bool("version", false, "Show version information")
-
-	flag.Parse()
-
-	// Handle version flag
-	if *showVersion {
-		fmt.Printf("GSwarm version %s\n", Version)
-		fmt.Printf("Build date: %s\n", BuildDate)
-		fmt.Printf("Git commit: %s\n", GitCommit)
-		fmt.Printf("Go version: %s\n", runtime.Version())
-		fmt.Printf("OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
-		os.Exit(0)
-	}
-
-	fmt.Println("Starting RL Swarm Supervisor...")
-
-	// Check Python version
-	fmt.Println("Checking Python version...")
-	if err := checkPythonVersion(); err != nil {
-		fmt.Printf("Python version check failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("Python version OK")
-
-	// Check for Yarn and install if missing
-	fmt.Println("Checking for Yarn...")
-	if err := checkYarn(); err != nil {
-		fmt.Println("Yarn not found. Attempting to install with 'npm install -g yarn'...")
-		cmd := exec.Command("npm", "install", "-g", "yarn")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("Failed to install Yarn: %v\n", err)
-			os.Exit(1)
-		}
-		// Double-check Yarn is now available
-		if err := checkYarn(); err != nil {
-			fmt.Printf("Yarn installation verification failed: %v\n", err)
-			os.Exit(1)
-		}
-	}
-	fmt.Println("Yarn is available.")
-
-	// Print banner
-	printBanner()
-
-	// Get configuration from user or command line flags
-	var config Configuration
-	if flag.NFlag() > 0 {
-		// Use command line flags
-		config = Configuration{
-			PeerMaddr:       DefaultPeerMaddr,
-			HostMaddr:       DefaultHostMaddr,
-			IdentityPath:    *identityPath,
-			HFToken:         *hfToken,
-			OrgID:           *orgID,
-			ContractAddress: *contractAddress,
-			Game:            *game,
-			ConfigPath:      *configPath,
-			UseBigSwarm:     *bigSwarm,
-			ParamB:          *modelSize,
-			CPUOnly:         *cpuOnly,
-		}
-
-		// Set defaults if not provided
-		if config.IdentityPath == "" {
-			config.IdentityPath = "swarm.pem"
-		}
-		if config.Game == "" {
-			if config.UseBigSwarm {
-				config.Game = "dapo"
-			} else {
-				config.Game = "gsm8k"
-			}
-		}
-		if config.ContractAddress == "" {
-			if config.UseBigSwarm {
-				config.ContractAddress = BigSwarmContract
-			} else {
-				config.ContractAddress = SmallSwarmContract
-			}
-		}
-		if config.ConfigPath == "" {
-			config.ConfigPath = getConfigPath(config.ParamB, config.UseBigSwarm)
-		}
-		if config.OrgID != "" {
-			config.ConnectToTestnet = true
-		}
-	} else {
-		// Use interactive mode
-		config = getConfiguration()
-	}
-
-	// Handle modal login if connecting to testnet
-	if config.ConnectToTestnet && config.OrgID == "" {
-		orgID, err := setupModalLogin(config)
-		if err != nil {
-			fmt.Printf("Modal login failed: %v\n", err)
-			os.Exit(1)
-		}
-		config.OrgID = orgID
-	}
-
+// runSupervisor handles the main training loop
+func runSupervisor(config Configuration, venvPath string) error {
 	// Setup logging
-	os.MkdirAll("logs", 0755)
-	logFile, err := os.OpenFile("logs/gensyn_rl_swarm_go.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err := os.MkdirAll("logs", 0o755); err != nil {
+		return fmt.Errorf("failed to create logs directory: %w", err)
+	}
+	logFile, err := os.OpenFile("logs/gensyn_rl_swarm_go.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		log.Fatalf("open log: %v", err)
+		return fmt.Errorf("failed to open log file: %w", err)
 	}
 	defer logFile.Close()
 	logger := log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
 
 	// Install requirements
 	fmt.Println("Getting requirements...")
-	venvPath := "venv"
-	if err := installRequirements(venvPath, *requirementsFile, logger); err != nil {
-		logger.Fatalf("Failed to install requirements: %v", err)
+	if err := installRequirements(venvPath, config.RequirementsFile, logger); err != nil {
+		return fmt.Errorf("failed to install requirements: %w", err)
 	}
 	fmt.Println("Done!")
-
-	// Prompt for HuggingFace token only if not provided via command line
-	if config.HFToken == "" {
-		config.HFToken = promptHFToken()
-	}
 
 	fmt.Println("Good luck in the swarm!")
 	fmt.Println("Post about rl-swarm on X/twitter! --> https://tinyurl.com/swarmtweet")
@@ -1001,10 +1009,7 @@ runloop:
 					logger.Printf("Identity conflict detected, cleaning up stale processes")
 
 					// Clean up stale processes
-					if cleanupErr := cleanupStaleProcesses(logger); cleanupErr != nil {
-						logger.Printf("Failed to cleanup stale processes: %v", cleanupErr)
-						fmt.Printf("Warning: Failed to cleanup stale processes: %v\n", cleanupErr)
-					}
+					cleanupStaleProcesses(logger)
 
 					// Wait a bit longer before retry for identity conflicts
 					fmt.Println("Waiting 10 seconds before retry...")
@@ -1025,6 +1030,252 @@ runloop:
 			}
 		}
 	}
+
+	return nil
+}
+
+func main() {
+	app := createCLIApp()
+	if err := app.Run(os.Args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func createCLIApp() *cli.App {
+	app := &cli.App{
+		Name:    "gswarm",
+		Usage:   "Gensyn RL Swarm Supervisor - A robust supervisor for Gensyn RL Swarm",
+		Version: Version,
+		Authors: []*cli.Author{
+			{
+				Name:  "Deep-Commit Community",
+				Email: "community@deep-commit.com",
+			},
+		},
+		Copyright:   "© 2024 Deep-Commit Community. This is a third-party application not affiliated with Gensyn.",
+		Description: getAppDescription(),
+		Flags:       getAppFlags(),
+		Action:      getMainAction(),
+		Commands:    getAppCommands(),
+		Before:      getBeforeFunc(),
+	}
+	return app
+}
+
+func getAppDescription() string {
+	return `GSwarm is a robust Go-based supervisor for Gensyn RL Swarm that provides 
+automatic restart capabilities, dependency management, and comprehensive logging.
+
+Features:
+• Auto-restart on errors with exponential backoff
+• Comprehensive logging with timestamps
+• Python environment management
+• Interactive CLI with fallback prompts
+• Performance monitoring and error detection
+• Graceful shutdown handling
+• Support for both testnet and mainnet
+
+This is a community-developed tool designed to enhance the user experience of running Gensyn RL Swarm.`
+}
+
+func getAppFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.BoolFlag{
+			Name:    "testnet",
+			Usage:   "Connect to the Testnet",
+			EnvVars: []string{"GSWARM_TESTNET"},
+		},
+		&cli.BoolFlag{
+			Name:    "big-swarm",
+			Usage:   "Use big swarm (Math Hard) instead of small swarm (Math)",
+			EnvVars: []string{"GSWARM_BIG_SWARM"},
+		},
+		&cli.StringFlag{
+			Name:    "model-size",
+			Usage:   "Parameter count in billions",
+			Value:   "0.5",
+			EnvVars: []string{"GSWARM_MODEL_SIZE"},
+			Action:  validateModelSize,
+		},
+		&cli.StringFlag{
+			Name:    "hf-token",
+			Usage:   "HuggingFace access token for model pushing",
+			EnvVars: []string{"HUGGINGFACE_ACCESS_TOKEN", "GSWARM_HF_TOKEN"},
+		},
+		&cli.StringFlag{
+			Name:    "org-id",
+			Usage:   "Modal ORG_ID (required for testnet)",
+			EnvVars: []string{"GSWARM_ORG_ID"},
+		},
+		&cli.StringFlag{
+			Name:    "identity-path",
+			Usage:   "Path to identity PEM file",
+			Value:   "swarm.pem",
+			EnvVars: []string{"GSWARM_IDENTITY_PATH"},
+		},
+		&cli.StringFlag{
+			Name:    "contract-address",
+			Usage:   "Override smart contract address",
+			EnvVars: []string{"GSWARM_CONTRACT_ADDRESS"},
+		},
+		&cli.StringFlag{
+			Name:    "game",
+			Usage:   "Game type ('gsm8k' or 'dapo')",
+			EnvVars: []string{"GSWARM_GAME"},
+			Action:  validateGame,
+		},
+		&cli.StringFlag{
+			Name:    "config-path",
+			Usage:   "Path to YAML config file",
+			EnvVars: []string{"GSWARM_CONFIG_PATH"},
+		},
+		&cli.BoolFlag{
+			Name:    "cpu-only",
+			Usage:   "Force CPU-only mode",
+			EnvVars: []string{"GSWARM_CPU_ONLY"},
+		},
+		&cli.StringFlag{
+			Name:    "requirements",
+			Usage:   "Requirements file path (overrides default)",
+			EnvVars: []string{"GSWARM_REQUIREMENTS"},
+		},
+		&cli.BoolFlag{
+			Name:    "interactive",
+			Usage:   "Force interactive mode (prompt for all options)",
+			EnvVars: []string{"GSWARM_INTERACTIVE"},
+		},
+	}
+}
+
+func validateModelSize(c *cli.Context, v string) error {
+	validSizes := []string{"0.5", "1.5", "7", "32", "72"}
+	for _, size := range validSizes {
+		if v == size {
+			return nil
+		}
+	}
+	return fmt.Errorf("model-size must be one of: %v", validSizes)
+}
+
+func validateGame(c *cli.Context, v string) error {
+	if v != "gsm8k" && v != "dapo" {
+		return fmt.Errorf("game must be 'gsm8k' or 'dapo'")
+	}
+	return nil
+}
+
+func getMainAction() func(c *cli.Context) error {
+	return func(c *cli.Context) error {
+		fmt.Println("Starting RL Swarm Supervisor...")
+
+		// Print banner
+		printBanner()
+
+		// Bootstrap environment
+		venvPath, err := bootstrapEnv()
+		if err != nil {
+			return cli.Exit(fmt.Sprintf("Environment bootstrap failed: %v", err), 1)
+		}
+
+		// Configure
+		config, err := configure(c)
+		if err != nil {
+			return cli.Exit(fmt.Sprintf("Configuration failed: %v", err), 1)
+		}
+
+		// Run supervisor
+		if err := runSupervisor(config, venvPath); err != nil {
+			return cli.Exit(fmt.Sprintf("Supervisor failed: %v", err), 1)
+		}
+
+		return nil
+	}
+}
+
+func getAppCommands() []*cli.Command {
+	return []*cli.Command{
+		{
+			Name:    "version",
+			Aliases: []string{"v"},
+			Usage:   "Show detailed version information",
+			Action:  getVersionAction(),
+		},
+	}
+}
+
+func getVersionAction() func(c *cli.Context) error {
+	return func(c *cli.Context) error {
+		fmt.Printf("GSwarm version %s\n", Version)
+		fmt.Printf("Build date: %s\n", BuildDate)
+		fmt.Printf("Git commit: %s\n", GitCommit)
+		fmt.Printf("Go version: %s\n", runtime.Version())
+		fmt.Printf("OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		return nil
+	}
+}
+
+func getBeforeFunc() func(c *cli.Context) error {
+	return func(c *cli.Context) error {
+		// Set up custom help template
+		cli.AppHelpTemplate = getHelpTemplate()
+		return nil
+	}
+}
+
+func getHelpTemplate() string {
+	return `NAME:
+   {{.Name}} - {{.Usage}}
+
+USAGE:
+   {{.HelpName}} {{if .VisibleFlags}}[global options]{{end}}{{if .Commands}} command [command options]{{end}} \
+   {{if .ArgsUsage}}{{.ArgsUsage}}{{else}}[arguments...]{{end}}
+   {{if len .Authors}}
+AUTHOR{{with $length := len .Authors}}{{if ne 1 $length}}S{{end}}{{end}}:
+   {{range $index, $author := .Authors}}{{if $index}}
+   {{end}}{{$author.Name}}{{if $author.Email}} <{{$author.Email}}>{{end}}{{end}}
+   {{end}}{{if .Commands}}
+COMMANDS:{{range .CommandCategories}}
+   {{.Name}}:{{range .Commands}}
+     {{join .Names ", "}}{{"\t"}}{{.Usage}}{{end}}{{end}}{{end}}{{if .VisibleFlags}}
+GLOBAL OPTIONS:
+   {{range $index, $option := .VisibleFlags}}{{if $index}}
+   {{end}}{{$option}}{{end}}{{end}}{{if .Copyright }}
+COPYRIGHT:
+   {{.Copyright}}
+   {{end}}{{if .Version}}
+VERSION:
+   {{.Version}}
+   {{end}}
+EXAMPLES:
+   # Interactive mode (default)
+   gswarm
+
+   # Non-interactive mode with all options
+   gswarm --testnet --big-swarm --model-size 7 --org-id YOUR_ORG_ID --hf-token YOUR_TOKEN
+
+   # CPU-only mode
+   gswarm --cpu-only --model-size 0.5
+
+   # Custom requirements file
+   gswarm --requirements requirements-gpu.txt
+
+   # Show version
+   gswarm version
+
+ENVIRONMENT VARIABLES:
+   All flags can be set via environment variables with the GSWARM_ prefix.
+   For example: GSWARM_TESTNET=true, GSWARM_MODEL_SIZE=7, etc.
+
+   Special environment variables:
+   • HUGGINGFACE_ACCESS_TOKEN: For HuggingFace token (no prefix needed)
+   • GSWARM_ORG_ID: Modal organization ID for testnet access
+
+LEARN MORE:
+   • GitHub: https://github.com/Deep-Commit/gswarm
+   • Documentation: https://github.com/Deep-Commit/gswarm#readme
+   • Community: https://github.com/Deep-Commit/gswarm/discussions
+`
 }
 
 func nonBlockingSend(ch chan struct{}) {
