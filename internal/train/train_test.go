@@ -134,6 +134,8 @@ func TestInstallRequirements_DefaultFile(t *testing.T) {
 }
 
 func TestRunPythonTraining_IdentityConflictDetection(t *testing.T) {
+	// Note: We no longer detect identity conflicts since switching to direct passthrough
+	// to preserve TTY detection and progress bars. This test is kept for future reference.
 	cases := []struct {
 		name           string
 		stdoutOutput   string
@@ -144,13 +146,13 @@ func TestRunPythonTraining_IdentityConflictDetection(t *testing.T) {
 			name:           "identity conflict in stdout",
 			stdoutOutput:   ">> An error was detected while running rl-swarm.",
 			stderrOutput:   "",
-			expectConflict: true,
+			expectConflict: false, // No longer detected
 		},
 		{
 			name:           "identity conflict in stderr",
 			stdoutOutput:   "",
 			stderrOutput:   "Error: is already taken by another user",
-			expectConflict: true,
+			expectConflict: false, // No longer detected
 		},
 		{
 			name:           "no conflict",
@@ -195,16 +197,10 @@ func TestRunPythonTraining_IdentityConflictDetection(t *testing.T) {
 
 			err := RunPythonTraining(config, venvPath, logger)
 
-			if c.expectConflict {
-				if err == nil || !strings.Contains(err.Error(), "identity conflict detected") {
-					t.Errorf("Expected identity conflict error, got %v", err)
-				}
-			} else {
-				// For non-conflict cases, we expect the command to run successfully
-				// The mock command should exit with code 0
-				if err != nil && !strings.Contains(err.Error(), "identity conflict detected") {
-					t.Errorf("Unexpected error: %v", err)
-				}
+			// Since we switched to direct passthrough, we no longer detect identity conflicts
+			// All errors would be passed through to the user directly
+			if err != nil {
+				t.Errorf("Expected no error detection (direct passthrough), got %v", err)
 			}
 		})
 	}

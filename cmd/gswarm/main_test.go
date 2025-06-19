@@ -241,7 +241,8 @@ func TestMain_ConfigurationValidation(t *testing.T) {
 
 // TestMain_ErrorHandling tests error handling scenarios
 func TestMain_ErrorHandling(t *testing.T) {
-	// Test identity conflict detection
+	// Note: We no longer detect identity conflicts since switching to direct passthrough
+	// to preserve TTY detection and progress bars. This test is kept for future reference.
 	cfg := config.Configuration{
 		HFToken:      "test-token",
 		IdentityPath: "test.pem",
@@ -261,8 +262,10 @@ func TestMain_ErrorHandling(t *testing.T) {
 	}
 
 	err := train.RunPythonTraining(cfg, venvPath, logger)
-	if err == nil || !strings.Contains(err.Error(), "identity conflict detected") {
-		t.Errorf("Expected identity conflict error, got %v", err)
+	// Since we switched to direct passthrough, we no longer detect identity conflicts
+	// The error would be passed through to the user directly
+	if err != nil {
+		t.Errorf("Expected no error detection (direct passthrough), got %v", err)
 	}
 }
 

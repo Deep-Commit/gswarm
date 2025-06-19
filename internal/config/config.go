@@ -13,7 +13,7 @@ import (
 
 // Constants
 const (
-	DefaultPublicMaddr = "/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ"
+	DefaultPublicMaddr = "" // Empty by default, let Python pick OS address
 	DefaultPeerMaddr   = "/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ"
 	DefaultHostMaddr   = "/ip4/0.0.0.0/tcp/38331"
 	SmallSwarmContract = "0x69C6e1D608ec64885E7b185d39b04B491a71768C"

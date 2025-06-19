@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -33,7 +32,7 @@ var (
 const (
 	venvName = "gswarm-venv"
 
-	DefaultPublicMaddr = "/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ"
+	DefaultPublicMaddr = "" // Empty by default, let Python pick OS address
 	DefaultPeerMaddr   = "/ip4/38.101.215.13/tcp/30002/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ"
 	DefaultHostMaddr   = "/ip4/0.0.0.0/tcp/38331"
 	SmallSwarmContract = "0x69C6e1D608ec64885E7b185d39b04B491a71768C"
@@ -1019,19 +1018,10 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 	logger.Printf("Working directory: %s", cmd.Dir)
 	fmt.Printf("Working directory: %s\n", cmd.Dir)
 
-	// Capture stdout and stderr to detect identity conflicts using atomic operations
-	var identityConflictDetected atomic.Bool
-
-	// Create pipes for stdout and stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-
+	// Use direct passthrough to preserve TTY detection and progress bars
+	// Note: We lose identity conflict detection with this approach, but gain proper progress bars
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
 	// Start the command
@@ -1039,46 +1029,7 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 		return fmt.Errorf("failed to start training process: %w", err)
 	}
 
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fmt.Println(line) // Still print to console
-
-			// Check for identity conflict patterns
-			for _, marker := range errorMarkers {
-				if strings.Contains(strings.ToLower(line), strings.ToLower(marker)) {
-					identityConflictDetected.Store(true)
-					logger.Printf("Identity conflict detected in stdout: %s", line)
-					break
-				}
-			}
-		}
-	}()
-
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fmt.Fprintf(os.Stderr, "%s\n", line) // Still print to stderr
-
-			// Check for identity conflict patterns in stderr too
-			for _, marker := range errorMarkers {
-				if strings.Contains(strings.ToLower(line), strings.ToLower(marker)) {
-					identityConflictDetected.Store(true)
-					logger.Printf("Identity conflict detected in stderr: %s", line)
-					break
-				}
-			}
-		}
-	}()
-
 	err = cmd.Wait()
-
-	if identityConflictDetected.Load() {
-		return fmt.Errorf("identity conflict detected - need cleanup and retry")
-	}
-
 	return err
 }
 
