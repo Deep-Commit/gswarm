@@ -33,6 +33,13 @@ var errorMarkers = []string{
 	"Error:",
 	"Exception:",
 	"Traceback:",
+	"Identity from",
+	"is already taken by another user",
+	"already taken",
+	"identity conflict",
+	"duplicate identity",
+	"is not used by other peers",
+	"identity already in use",
 }
 
 // Configuration holds all the settings for the RL Swarm
@@ -723,11 +730,119 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 	}
 
 	cmd := exec.Command(venvPython, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	// Capture stdout and stderr to detect identity conflicts
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %v", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %v", err)
+	}
+
 	cmd.Stdin = os.Stdin
 
-	return cmd.Run()
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start training process: %v", err)
+	}
+
+	// Monitor output for identity conflicts
+	identityConflictDetected := false
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			fmt.Println(line) // Still print to console
+
+			// Check for identity conflict patterns
+			for _, marker := range errorMarkers {
+				if strings.Contains(strings.ToLower(line), strings.ToLower(marker)) {
+					if strings.Contains(strings.ToLower(line), "identity") &&
+						(strings.Contains(strings.ToLower(line), "taken") ||
+							strings.Contains(strings.ToLower(line), "already") ||
+							strings.Contains(strings.ToLower(line), "used")) {
+						identityConflictDetected = true
+						logger.Printf("Identity conflict detected in output: %s", line)
+						break
+					}
+				}
+			}
+		}
+	}()
+
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			fmt.Fprintf(os.Stderr, "%s\n", line) // Still print to stderr
+
+			// Check for identity conflict patterns in stderr too
+			for _, marker := range errorMarkers {
+				if strings.Contains(strings.ToLower(line), strings.ToLower(marker)) {
+					if strings.Contains(strings.ToLower(line), "identity") &&
+						(strings.Contains(strings.ToLower(line), "taken") ||
+							strings.Contains(strings.ToLower(line), "already") ||
+							strings.Contains(strings.ToLower(line), "used")) {
+						identityConflictDetected = true
+						logger.Printf("Identity conflict detected in stderr: %s", line)
+						break
+					}
+				}
+			}
+		}
+	}()
+
+	err = cmd.Wait()
+
+	if identityConflictDetected {
+		return fmt.Errorf("identity conflict detected - need cleanup and retry")
+	}
+
+	return err
+}
+
+func cleanupStaleProcesses(logger *log.Logger) error {
+	fmt.Println("Cleaning up stale gensyn processes...")
+	logger.Printf("Cleaning up stale gensyn processes")
+
+	// Kill any existing gensyn processes
+	cmd := exec.Command("pkill", "-f", "gensyn")
+	if err := cmd.Run(); err != nil {
+		// pkill returns error if no processes found, which is fine
+		fmt.Println("No existing gensyn processes found")
+		logger.Printf("No existing gensyn processes found")
+	} else {
+		fmt.Println("Killed existing gensyn processes")
+		logger.Printf("Killed existing gensyn processes")
+	}
+
+	// Also try to kill hivemind processes
+	cmd = exec.Command("pkill", "-f", "hivemind")
+	if err := cmd.Run(); err != nil {
+		fmt.Println("No existing hivemind processes found")
+		logger.Printf("No existing hivemind processes found")
+	} else {
+		fmt.Println("Killed existing hivemind processes")
+		logger.Printf("Killed existing hivemind processes")
+	}
+
+	// Wait a moment for processes to fully terminate
+	time.Sleep(2 * time.Second)
+
+	// Check for any remaining processes
+	cmd = exec.Command("pgrep", "-f", "gensyn")
+	if err := cmd.Run(); err == nil {
+		// Still have processes, try force kill
+		fmt.Println("Force killing remaining gensyn processes...")
+		logger.Printf("Force killing remaining gensyn processes")
+		exec.Command("pkill", "-9", "-f", "gensyn").Run()
+		exec.Command("pkill", "-9", "-f", "hivemind").Run()
+		time.Sleep(1 * time.Second)
+	}
+
+	return nil
 }
 
 func main() {
@@ -893,17 +1008,39 @@ runloop:
 			logger.Println("Starting Python training process...")
 			fmt.Println("Starting RL Swarm training...")
 
-			if err := runPythonTraining(config, venvPath, logger); err != nil {
+			err := runPythonTraining(config, venvPath, logger)
+			if err != nil {
 				logger.Printf("Training process exited with error: %v", err)
 				fmt.Printf("Training process exited with error: %v\n", err)
+
+				// Check if this is an identity conflict
+				if strings.Contains(err.Error(), "identity conflict detected") {
+					fmt.Println("Identity conflict detected! Cleaning up stale processes and retrying...")
+					logger.Printf("Identity conflict detected, cleaning up stale processes")
+
+					// Clean up stale processes
+					if cleanupErr := cleanupStaleProcesses(logger); cleanupErr != nil {
+						logger.Printf("Failed to cleanup stale processes: %v", cleanupErr)
+						fmt.Printf("Warning: Failed to cleanup stale processes: %v\n", cleanupErr)
+					}
+
+					// Wait a bit longer before retry for identity conflicts
+					fmt.Println("Waiting 10 seconds before retry...")
+					time.Sleep(10 * time.Second)
+
+					// Reset backoff for identity conflicts since we cleaned up
+					backoff = initialBackoff
+				} else {
+					// Regular error, use exponential backoff
+					time.Sleep(backoff)
+					backoff = minDuration(backoff*2, maxBackoff)
+				}
+
+				nonBlockingSend(restartCh)
 			} else {
 				logger.Println("Training process exited cleanly.")
 				backoff = initialBackoff // reset on clean exit
 			}
-
-			time.Sleep(backoff)
-			backoff = minDuration(backoff*2, maxBackoff)
-			nonBlockingSend(restartCh)
 		}
 	}
 }
