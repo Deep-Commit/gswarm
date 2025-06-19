@@ -64,13 +64,20 @@ var (
 
 // GetConfigPath returns the appropriate config path based on parameters
 func GetConfigPath(paramB string, useBigSwarm bool) string {
-	baseDir := "configs"
-	if useBigSwarm {
-		baseDir = baseDir + "/big_swarm"
-	} else {
-		baseDir = baseDir + "/small_swarm"
+	// Use the same logic as the original run_rl_swarm.sh script
+	// Note: We can't check isCPUOnly() here since it's not available in this package
+	// The CPU-only check should be done in the main package before calling this function
+
+	// For now, assume GPU mode and use the gpu configs
+	switch paramB {
+	case "32", "72":
+		return fmt.Sprintf("hivemind_exp/configs/gpu/grpo-qwen-2.5-%sb-bnb-4bit-deepseek-r1.yaml", paramB)
+	case "0.5", "1.5", "7":
+		return fmt.Sprintf("hivemind_exp/configs/gpu/grpo-qwen-2.5-%sb-deepseek-r1.yaml", paramB)
+	default:
+		// Fallback to 0.5B config
+		return "hivemind_exp/configs/gpu/grpo-qwen-2.5-0.5b-deepseek-r1.yaml"
 	}
-	return baseDir + "/" + paramB + "B.yaml"
 }
 
 // GetConfiguration builds a Configuration, prompting only for flags not in `visited`

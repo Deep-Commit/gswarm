@@ -39,10 +39,10 @@ func TestGetConfigPath(t *testing.T) {
 		useBigSwarm bool
 		want        string
 	}{
-		{"small swarm 0.5B", "0.5", false, "configs/small_swarm/0.5B.yaml"},
-		{"big swarm 32B", "32", true, "configs/big_swarm/32B.yaml"},
-		{"small swarm 7B", "7", false, "configs/small_swarm/7B.yaml"},
-		{"big swarm 72B", "72", true, "configs/big_swarm/72B.yaml"},
+		{"small swarm 0.5B", "0.5", false, "hivemind_exp/configs/gpu/grpo-qwen-2.5-0.5b-deepseek-r1.yaml"},
+		{"big swarm 32B", "32", true, "hivemind_exp/configs/gpu/grpo-qwen-2.5-32b-bnb-4bit-deepseek-r1.yaml"},
+		{"small swarm 7B", "7", false, "hivemind_exp/configs/gpu/grpo-qwen-2.5-7b-deepseek-r1.yaml"},
+		{"big swarm 72B", "72", true, "hivemind_exp/configs/gpu/grpo-qwen-2.5-72b-bnb-4bit-deepseek-r1.yaml"},
 	}
 
 	for _, c := range cases {
@@ -81,7 +81,7 @@ func TestGetConfiguration_FlagOverrides(t *testing.T) {
 			want: Configuration{
 				ConnectToTestnet: false, UseBigSwarm: false, ParamB: "0.5",
 				HFToken: "None", OrgID: "", IdentityPath: "swarm.pem",
-				ContractAddress: SmallSwarmContract, Game: "gsm8k", ConfigPath: "configs/small_swarm/0.5B.yaml",
+				ContractAddress: SmallSwarmContract, Game: "gsm8k", ConfigPath: "hivemind_exp/configs/gpu/grpo-qwen-2.5-0.5b-deepseek-r1.yaml",
 				CPUOnly: false, RequirementsFile: "",
 				PublicMaddr: DefaultPublicMaddr, PeerMaddr: DefaultPeerMaddr, HostMaddr: DefaultHostMaddr,
 			},
