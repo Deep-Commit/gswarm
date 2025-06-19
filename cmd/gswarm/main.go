@@ -1001,6 +1001,17 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 
 	cmd := exec.Command(venvPython, args...)
 
+	// Set environment variables like the bash script does
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("PUB_MULTI_ADDRS=%s", config.PublicMaddr),
+		fmt.Sprintf("PEER_MULTI_ADDRS=%s", config.PeerMaddr),
+		fmt.Sprintf("HOST_MULTI_ADDRS=%s", config.HostMaddr),
+		fmt.Sprintf("IDENTITY_PATH=%s", config.IdentityPath),
+		fmt.Sprintf("CONNECT_TO_TESTNET=%t", config.ConnectToTestnet),
+		fmt.Sprintf("ORG_ID=%s", config.OrgID),
+		"HF_HUB_DOWNLOAD_TIMEOUT=120",
+	)
+
 	// Change to the rl-swarm directory before running the command (like the run script does)
 	cmd.Dir = "rl-swarm"
 
