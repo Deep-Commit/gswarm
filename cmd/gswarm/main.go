@@ -750,18 +750,12 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 			line := scanner.Text()
 			fmt.Println(line) // Still print to console
 
-			// Check for identity conflict patterns
-			for _, marker := range errorMarkers {
-				if strings.Contains(strings.ToLower(line), strings.ToLower(marker)) {
-					if strings.Contains(strings.ToLower(line), "identity") &&
-						(strings.Contains(strings.ToLower(line), "taken") ||
-							strings.Contains(strings.ToLower(line), "already") ||
-							strings.Contains(strings.ToLower(line), "used")) {
-						identityConflictDetected = true
-						logger.Printf("Identity conflict detected in output: %s", line)
-						break
-					}
-				}
+			// Check for specific identity conflict pattern
+			if strings.Contains(strings.ToLower(line), "identity") &&
+				strings.Contains(strings.ToLower(line), "is already taken by another user") {
+				identityConflictDetected = true
+				logger.Printf("Identity conflict detected in output: %s", line)
+				break
 			}
 		}
 	}()
@@ -772,18 +766,12 @@ func runPythonTraining(config Configuration, venvPath string, logger *log.Logger
 			line := scanner.Text()
 			fmt.Fprintf(os.Stderr, "%s\n", line) // Still print to stderr
 
-			// Check for identity conflict patterns in stderr too
-			for _, marker := range errorMarkers {
-				if strings.Contains(strings.ToLower(line), strings.ToLower(marker)) {
-					if strings.Contains(strings.ToLower(line), "identity") &&
-						(strings.Contains(strings.ToLower(line), "taken") ||
-							strings.Contains(strings.ToLower(line), "already") ||
-							strings.Contains(strings.ToLower(line), "used")) {
-						identityConflictDetected = true
-						logger.Printf("Identity conflict detected in stderr: %s", line)
-						break
-					}
-				}
+			// Check for specific identity conflict pattern in stderr too
+			if strings.Contains(strings.ToLower(line), "identity") &&
+				strings.Contains(strings.ToLower(line), "is already taken by another user") {
+				identityConflictDetected = true
+				logger.Printf("Identity conflict detected in stderr: %s", line)
+				break
 			}
 		}
 	}()
