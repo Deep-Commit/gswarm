@@ -14,7 +14,6 @@ def main():
     parser.add_argument("--identity_path", default="swarm.pem")
     parser.add_argument("--config", default="test.yaml")
     parser.add_argument("--game", default="gsm8k")
-    parser.add_argument("--param_b", default="0.5")
     parser.add_argument("--public_maddr", default="")
     parser.add_argument("--initial_peers", default="")
     parser.add_argument("--host_maddr", default="")
@@ -26,7 +25,6 @@ def main():
     print("Starting RL-Swarm training simulation...")
     print(f"Config: {args.config}")
     print(f"Game: {args.game}")
-    print(f"Model Size: {args.param_b}B")
     print(f"Identity: {args.identity_path}")
     
     if args.modal_org_id:

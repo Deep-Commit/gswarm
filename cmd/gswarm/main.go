@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Deep-Commit/gswarm/internal/telegram"
 	"github.com/urfave/cli/v2"
 )
 
@@ -1404,6 +1405,26 @@ func getAppFlags() []cli.Flag {
 			Usage:   "Force interactive mode (prompt for all options)",
 			EnvVars: []string{"GSWARM_INTERACTIVE"},
 		},
+		&cli.BoolFlag{
+			Name:    "telegram",
+			Usage:   "Start Telegram monitoring service",
+			EnvVars: []string{"GSWARM_TELEGRAM"},
+		},
+		&cli.StringFlag{
+			Name:    "user-data-path",
+			Usage:   "Path to userData.json file for Telegram service",
+			EnvVars: []string{"GSWARM_USER_DATA_PATH"},
+		},
+		&cli.StringFlag{
+			Name:    "telegram-config-path",
+			Usage:   "Path to telegram-config.json file for Telegram integration",
+			EnvVars: []string{"GSWARM_TELEGRAM_CONFIG_PATH"},
+		},
+		&cli.BoolFlag{
+			Name:    "update-telegram-config",
+			Usage:   "Force update of Telegram config via CLI prompts",
+			EnvVars: []string{"GSWARM_UPDATE_TELEGRAM_CONFIG"},
+		},
 	}
 }
 
@@ -1426,6 +1447,11 @@ func validateGame(c *cli.Context, v string) error {
 
 func getMainAction() func(c *cli.Context) error {
 	return func(c *cli.Context) error {
+		// Check if telegram flag is set
+		if c.Bool("telegram") {
+			return runTelegramService(c)
+		}
+
 		fmt.Println("Starting RL Swarm Supervisor...")
 
 		// Print banner
@@ -1549,4 +1575,13 @@ func minDuration(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+func runTelegramService(c *cli.Context) error {
+	userDataPath := c.String("user-data-path")
+	telegramConfigPath := c.String("telegram-config-path")
+	updateTelegramConfig := c.Bool("update-telegram-config")
+
+	telegramService := telegram.NewTelegramService(userDataPath, telegramConfigPath, updateTelegramConfig)
+	return telegramService.Run()
 }
