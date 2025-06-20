@@ -4,7 +4,7 @@
 > 
 > GSwarm is **NOT** affiliated with or endorsed by the official Gensyn team. This is an independent, community-developed supervisor tool designed to enhance the user experience of running Gensyn RL Swarm. We cannot modify the core RL Swarm functionality, training algorithms, or blockchain integration.
 
-A robust Go-based supervisor for Gensyn RL Swarm that provides automatic restart capabilities, dependency management, and comprehensive logging.
+A robust Go-based supervisor for Gensyn RL Swarm that provides automatic restart capabilities, dependency management, comprehensive logging, and Telegram monitoring.
 
 ## ✨ Features
 
@@ -15,6 +15,7 @@ A robust Go-based supervisor for Gensyn RL Swarm that provides automatic restart
 - ⚡ **Performance Monitoring**: Real-time output streaming with error detection
 - 🛡️ **Graceful Shutdown**: Proper signal handling for clean process termination
 - 🚀 **Dual Mode**: Supports both command line flags and interactive prompts
+- 📱 **Telegram Monitoring**: Real-time blockchain activity notifications via Telegram
 
 ## 🚀 Quick Start
 
@@ -33,7 +34,7 @@ This will place the `gswarm` binary in your `$GOPATH/bin` or `$HOME/go/bin` (mak
 
 **Verify installation:**
 ```bash
-gswarm -version
+gswarm --version
 ```
 
 #### Option 2: Clone and Build from Source
@@ -45,12 +46,14 @@ make install
 ```
 After this, you can run `gswarm` from anywhere (if your Go bin directory is in your PATH).
 
-2. **Navigate to your Gensyn RL Swarm directory** (where your RL Swarm code and config are located):
+### Basic Usage
+
+1. **Navigate to your Gensyn RL Swarm directory** (where your RL Swarm code and config are located):
    ```bash
    cd /path/to/your/gensyn-rl-swarm
    ```
 
-3. **Run the supervisor**:
+2. **Run the supervisor**:
    ```bash
    gswarm
    ```
@@ -67,7 +70,6 @@ When run without any flags, the supervisor will prompt for all necessary configu
 
 ```bash
 cd /path/to/gensyn-rl-swarm
-
 gswarm
 ```
 
@@ -76,7 +78,7 @@ gswarm
 You can provide all configuration via command line flags for non-interactive operation:
 
 ```bash
-gswarm --config config.yaml --hf-token YOUR_TOKEN --identity-path identity.pem --org-id YOUR_ORG_ID --contract-address 0x... --game gsm8k
+gswarm --config-path config.yaml --hf-token YOUR_TOKEN --identity-path identity.pem --org-id YOUR_ORG_ID --contract-address 0x... --game gsm8k
 
 gswarm --requirements requirements-cpu.txt
 
@@ -186,6 +188,137 @@ gswarm --requirements requirements-gpu.txt
 gswarm version
 ```
 
+## 📱 Telegram Monitoring
+
+GSwarm includes a powerful Telegram monitoring service that provides real-time notifications about your blockchain activity, including votes, rewards, and balance changes.
+
+### Features
+
+- 🔔 **Real-time Notifications**: Get instant updates on blockchain activity
+- 📊 **Vote Tracking**: Monitor your voting activity and changes
+- 💰 **Reward Monitoring**: Track reward accumulation and changes
+- 💎 **Balance Updates**: Monitor your wallet balance changes
+- 📈 **Change Detection**: Only notified when values actually change
+- 🛡️ **Secure Configuration**: Local config file storage
+
+### Setup Instructions
+
+#### 1. Create a Telegram Bot
+
+1. **Start a chat with @BotFather** on Telegram
+2. **Send `/newbot`** and follow the instructions
+3. **Choose a name** for your bot (e.g., "GSwarm Monitor")
+4. **Choose a username** (must end with 'bot', e.g., "gswarm_monitor_bot")
+5. **Save the bot token** provided by BotFather
+
+#### 2. Get Your Chat ID
+
+1. **Start a chat with your bot** by clicking the link or searching for it
+2. **Send any message** to the bot (e.g., "Hello")
+3. **Visit this URL** in your browser (replace `YOUR_BOT_TOKEN` with your actual token):
+   ```
+   https://api.telegram.org/botYOUR_BOT_TOKEN/getUpdates
+   ```
+4. **Find your chat ID** in the response (look for `"chat":{"id":123456789}`)
+
+#### 3. Run the Telegram Service
+
+```bash
+# Basic usage (will prompt for bot token and chat ID)
+gswarm --telegram
+
+# With custom user data path
+gswarm --telegram --user-data-path /path/to/userData.json
+
+# With custom config path
+gswarm --telegram --telegram-config-path /path/to/telegram-config.json
+
+# Force update configuration
+gswarm --telegram --update-telegram-config
+```
+
+### Telegram Command Options
+
+| Flag | Description | Default | Environment Variable |
+|------|-------------|---------|---------------------|
+| `--telegram` | Start Telegram monitoring service | `false` | `GSWARM_TELEGRAM` |
+| `--user-data-path` | Path to userData.json file | Auto-detected | `GSWARM_USER_DATA_PATH` |
+| `--telegram-config-path` | Path to telegram-config.json | `telegram-config.json` | `GSWARM_TELEGRAM_CONFIG_PATH` |
+| `--update-telegram-config` | Force update of Telegram config | `false` | `GSWARM_UPDATE_TELEGRAM_CONFIG` |
+
+### Configuration Files
+
+The Telegram service creates and manages these files:
+
+- **`telegram-config.json`**: Stores your bot token and chat ID
+- **`telegram_previous_data.json`**: Tracks previous blockchain data for change detection
+
+### Example Usage
+
+```bash
+# First time setup (interactive)
+gswarm --telegram
+
+# Run with existing config
+gswarm --telegram
+
+# Update configuration
+gswarm --telegram --update-telegram-config
+
+# Custom paths
+gswarm --telegram \
+  --user-data-path /path/to/userData.json \
+  --telegram-config-path /path/to/telegram-config.json
+```
+
+### What You'll Receive
+
+The Telegram service monitors and notifies you about:
+
+- **Vote Changes**: When your vote count increases or decreases
+- **Reward Changes**: When your accumulated rewards change
+- **Balance Changes**: When your wallet balance changes
+- **Welcome Message**: Initial setup confirmation
+
+### Sample Notifications
+
+```
+🎯 Vote Update
+Previous: 1,234 votes
+Current: 1,456 votes
+Change: +222 votes (+18.0%)
+
+💰 Reward Update  
+Previous: 0.5 ETH
+Current: 0.75 ETH
+Change: +0.25 ETH (+50.0%)
+
+💎 Balance Update
+Previous: 2.1 ETH
+Current: 2.3 ETH
+Change: +0.2 ETH (+9.5%)
+```
+
+### Troubleshooting Telegram
+
+1. **"Bot token invalid"**
+   - Verify your bot token from @BotFather
+   - Use `--update-telegram-config` to re-enter it
+
+2. **"Chat ID not found"**
+   - Make sure you've sent a message to your bot
+   - Check the getUpdates URL response
+   - Use `--update-telegram-config` to re-enter it
+
+3. **"No notifications received"**
+   - Check that your bot is active
+   - Verify the chat ID is correct
+   - Ensure you have blockchain activity to monitor
+
+4. **"userData.json not found"**
+   - Specify the correct path with `--user-data-path`
+   - The service will search common locations automatically
+
 ## 🔧 How It Works
 
 1. **Dependency Management**: 
@@ -206,6 +339,11 @@ gswarm version
 4. **Configuration Modes**:
    - **Command Line Mode**: Uses provided flags, prompts only for missing required values
    - **Interactive Mode**: Prompts for all configuration interactively
+
+5. **Telegram Monitoring**:
+   - Monitors blockchain data via Alchemy API
+   - Tracks changes in votes, rewards, and balance
+   - Sends formatted notifications via Telegram Bot API
 
 ## 📝 Logging
 
@@ -350,6 +488,7 @@ GSwarm is an **independent, community-developed tool** that operates as a superv
 - Monitoring and logging
 - Configuration management
 - User experience improvements
+- Telegram monitoring and notifications
 
 ### What We Cannot Do
 - Modify training algorithms
@@ -372,9 +511,11 @@ For detailed information about upcoming features and development plans, see our 
 - **Configuration Profiles**: Save/load configuration presets  
 - **Improved Error Handling**: Better error classification and recovery
 - **Multi-Node Support**: Basic management of multiple GPU nodes
+- **Telegram Enhancements**: More detailed notifications and analytics
 
 ### Upcoming Features
 - **Local GUI Application**: Desktop application for monitoring and control
 - **Real-time Dashboard**: Visual monitoring with charts and graphs
 - **Configuration Management**: Visual profile editor and templates
 - **System Integration**: System tray, notifications, and auto-start
+- **Advanced Telegram Features**: Custom notification schedules and filters
