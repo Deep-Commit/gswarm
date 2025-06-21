@@ -375,7 +375,13 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		// Build per-peer breakdown
 		var peerBreakdown strings.Builder
 		for i, data := range peerData {
-			peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, data.PeerID))
+			// Truncate the peer ID for better readability
+			peerID := data.PeerID
+			if len(peerID) > 20 {
+				peerID = peerID[:3] + "..." + peerID[len(peerID)-3:]
+			}
+
+			peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
 			peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s\n", data.Votes.String()))
 			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s\n\n", data.Rewards.String()))
 		}
