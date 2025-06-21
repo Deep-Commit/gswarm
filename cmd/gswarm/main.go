@@ -1411,11 +1411,6 @@ func getAppFlags() []cli.Flag {
 			EnvVars: []string{"GSWARM_TELEGRAM"},
 		},
 		&cli.StringFlag{
-			Name:    "user-data-path",
-			Usage:   "Path to userData.json file for Telegram service",
-			EnvVars: []string{"GSWARM_USER_DATA_PATH"},
-		},
-		&cli.StringFlag{
 			Name:    "telegram-config-path",
 			Usage:   "Path to telegram-config.json file for Telegram integration",
 			EnvVars: []string{"GSWARM_TELEGRAM_CONFIG_PATH"},
@@ -1578,10 +1573,9 @@ func minDuration(a, b time.Duration) time.Duration {
 }
 
 func runTelegramService(c *cli.Context) error {
-	userDataPath := c.String("user-data-path")
 	telegramConfigPath := c.String("telegram-config-path")
 	updateTelegramConfig := c.Bool("update-telegram-config")
 
-	telegramService := telegram.NewTelegramService(userDataPath, telegramConfigPath, updateTelegramConfig)
+	telegramService := telegram.NewTelegramService(telegramConfigPath, updateTelegramConfig)
 	return telegramService.Run()
 }
