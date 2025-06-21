@@ -1,3 +1,35 @@
+<p align="center">
+  <a href="https://gswarm.dev" target="_blank">
+    <img
+      src="https://gswarm.dev/favicon.svg"
+      alt="GSWARM logo"
+      width="140"                      
+      height="140"
+    />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://gswarm.dev/docs" target="_blank">
+    <img
+      alt="GSWARM Docs"
+      src="https://img.shields.io/static/v1?label=Docs&message=gswarm.dev%2Fdocs&color=3E7BF6&style=for-the-badge&logo=readthedocs"
+    />
+  </a>
+  <a href="https://gswarm.dev" target="_blank">
+    <img
+      alt="Live Site"
+      src="https://img.shields.io/static/v1?label=Site&message=gswarm.dev&color=000000&style=for-the-badge&logo=vercel"
+    />
+  </a>
+  <a href="https://discord.gg/wzHhFBcT" target="_blank">
+    <img
+      alt="Join Discord"
+      src="https://img.shields.io/static/v1?label=Chat&message=Discord&color=5865F2&style=for-the-badge&logo=discord"
+    />
+  </a>
+</p>
+
 # GSwarm - Gensyn RL Swarm Supervisor
 
 > **⚠️ Important Notice: This is a third-party application**
