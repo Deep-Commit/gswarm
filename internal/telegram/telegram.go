@@ -3,6 +3,7 @@ package telegram
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
 )
 
 // Blockchain constants
@@ -26,6 +29,9 @@ const (
 	coordAddrMathHard = "0x6947c6E196a48B77eFa9331EC1E3e45f3Ee5Fd58"
 )
 
+// ABI for the getPeerId function
+const coordABI = `[{"constant":true,"inputs":[{"name":"eoaAddresses","type":"address[]"}],"name":"getPeerId","outputs":[{"name":"","type":"string[][]"}],"stateMutability":"view","type":"function"}]`
+
 // TelegramConfig stores the info needed to send messages
 // to Telegram
 type TelegramConfig struct {
@@ -35,20 +41,6 @@ type TelegramConfig struct {
 }
 
 const DefaultConfigPath = "telegram-config.json"
-
-// UserData represents the user data structure from Gensyn
-type UserData struct {
-	OrgID   string `json:"orgId"`
-	Address string `json:"address"`
-	UserID  string `json:"userId"`
-	Email   string `json:"email"`
-}
-
-// UserDataFile represents the complete structure of userData.json
-type UserDataFile struct {
-	// The key is dynamic (like "org_12345"), so we'll use a map
-	Data map[string]UserData `json:"-"`
-}
 
 // BlockchainData represents the blockchain data for a user
 type BlockchainData struct {
@@ -66,18 +58,18 @@ type PreviousData struct {
 
 // TelegramService represents the telegram monitoring service
 type TelegramService struct {
-	UserDataPath      string
 	ConfigPath        string
 	ForceConfigUpdate bool
 	Config            *TelegramConfig
+	UserEOAAddress    string
+	PeerIDs           []string
 	PreviousData      *PreviousData
 	StopChan          chan bool
 }
 
 // NewTelegramService creates a new telegram service instance
-func NewTelegramService(userDataPath string, configPath string, forceUpdate bool) *TelegramService {
+func NewTelegramService(configPath string, forceUpdate bool) *TelegramService {
 	return &TelegramService{
-		UserDataPath:      userDataPath,
 		ConfigPath:        configPath,
 		ForceConfigUpdate: forceUpdate,
 		PreviousData:      &PreviousData{Votes: big.NewInt(0), Rewards: big.NewInt(0)},
@@ -187,93 +179,6 @@ func printBanner() {
 	fmt.Println("\033[0m")
 }
 
-// findUserDataFile attempts to locate the userData.json file
-func (t *TelegramService) findUserDataFile() (string, error) {
-	// If a specific path was provided, use it
-	if t.UserDataPath != "" {
-		if _, err := os.Stat(t.UserDataPath); err == nil {
-			return t.UserDataPath, nil
-		}
-		return "", fmt.Errorf("userData.json not found at specified path: %s", t.UserDataPath)
-	}
-
-	// Try to find the file in common locations
-	possiblePaths := []string{
-		"modal-login/temp-data/userData.json",
-		"rl-swarm/modal-login/temp-data/userData.json",
-		"../modal-login/temp-data/userData.json",
-		"./modal-login/temp-data/userData.json",
-	}
-
-	for _, path := range possiblePaths {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-
-	return "", fmt.Errorf("userData.json not found in any of the expected locations. Please specify the path manually")
-}
-
-// loadUserData loads and parses the userData.json file
-func (t *TelegramService) loadUserData() (*UserData, error) {
-	filePath, err := t.findUserDataFile()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find userData.json: %w", err)
-	}
-
-	fmt.Printf("Found userData.json at: %s\n", filePath)
-
-	// Read the file
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read userData.json: %w", err)
-	}
-
-	// Parse the JSON as a map first to handle dynamic keys
-	var rawData map[string]interface{}
-	if err := json.Unmarshal(data, &rawData); err != nil {
-		return nil, fmt.Errorf("failed to parse userData.json: %w", err)
-	}
-
-	// Get the first (and presumably only) organization data
-	if len(rawData) == 0 {
-		return nil, fmt.Errorf("userData.json is empty")
-	}
-
-	// Get the first key (org ID)
-	var orgKey string
-	for key := range rawData {
-		orgKey = key
-		break
-	}
-
-	// Extract the user data for this org
-	orgData, ok := rawData[orgKey].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid structure in userData.json")
-	}
-
-	// Convert to UserData struct
-	userData := &UserData{
-		OrgID:   orgKey,
-		Address: getStringValue(orgData, "address"),
-		UserID:  getStringValue(orgData, "userId"),
-		Email:   getStringValue(orgData, "email"),
-	}
-
-	return userData, nil
-}
-
-// getStringValue safely extracts a string value from a map
-func getStringValue(data map[string]interface{}, key string) string {
-	if value, ok := data[key]; ok {
-		if str, ok := value.(string); ok {
-			return str
-		}
-	}
-	return ""
-}
-
 // sendTelegramMessage sends a message to Telegram using the Bot API
 func (t *TelegramService) sendTelegramMessage(text string) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.Config.BotToken)
@@ -353,19 +258,23 @@ func (t *TelegramService) Run() error {
 		fmt.Println("Welcome message already sent previously.")
 	}
 
-	// Try to load user data
-	userData, err := t.loadUserData()
+	// Prompt for EOA address
+	fmt.Println("Please provide your EOA address to start monitoring...")
+	eoaAddress, err := promptForEOAAddress()
 	if err != nil {
-		fmt.Printf("Warning: Could not load user data: %v\n", err)
-		fmt.Println("Please ensure you have run the Gensyn application and created a user account.")
-		fmt.Println("You can also specify the path to userData.json manually.")
-		return err
+		return fmt.Errorf("failed to get EOA address: %w", err)
 	}
+	t.UserEOAAddress = eoaAddress
 
-	fmt.Printf("Successfully loaded user data for: %s\n", userData.Email)
-	fmt.Printf("User ID: %s\n", userData.UserID)
-	fmt.Printf("Org ID: %s\n", userData.OrgID)
-	fmt.Printf("Address: %s\n", userData.Address)
+	// Fetch peer IDs for the EOA address
+	fmt.Printf("Fetching peer IDs for address: %s\n", eoaAddress)
+	peerIDs, err := t.getPeerIDs(eoaAddress)
+	if err != nil {
+		return fmt.Errorf("failed to fetch peer IDs: %w", err)
+	}
+	t.PeerIDs = peerIDs
+
+	fmt.Printf("Successfully loaded %d peer IDs for monitoring\n", len(peerIDs))
 
 	// Load previous data from persistent storage
 	previousData, err := t.loadPreviousData()
@@ -389,7 +298,7 @@ func (t *TelegramService) Run() error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Do initial check
-	if err := t.checkAndNotify(userData, previousData); err != nil {
+	if err := t.checkAndNotifyWithPeerIDs(previousData); err != nil {
 		fmt.Printf("Error in initial check: %v\n", err)
 	}
 
@@ -397,7 +306,7 @@ func (t *TelegramService) Run() error {
 	for {
 		select {
 		case <-ticker.C:
-			if err := t.checkAndNotify(userData, previousData); err != nil {
+			if err := t.checkAndNotifyWithPeerIDs(previousData); err != nil {
 				fmt.Printf("Error in monitoring check: %v\n", err)
 			}
 		case <-sigChan:
@@ -410,81 +319,162 @@ func (t *TelegramService) Run() error {
 	}
 }
 
-// checkAndNotify checks blockchain data and sends notification if there are changes
-func (t *TelegramService) checkAndNotify(userData *UserData, previousData *PreviousData) error {
-	fmt.Printf("\n[%s] Checking blockchain data...\n", time.Now().Format("2006-01-02 15:04:05"))
+// checkAndNotifyWithPeerIDs checks blockchain data for all peer IDs and sends notification if there are changes
+func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) error {
+	fmt.Printf("\n[%s] Checking blockchain data for %d peer IDs...\n", time.Now().Format("2006-01-02 15:04:05"), len(t.PeerIDs))
 
-	// Query blockchain data
-	blockchainData, err := t.GetBlockchainData(userData.Address)
-	if err != nil {
-		fmt.Printf("Warning: Could not query blockchain data: %v\n", err)
-		return err
+	var totalVotes *big.Int = big.NewInt(0)
+	var totalRewards *big.Int = big.NewInt(0)
+	var peerData []struct {
+		PeerID  string
+		Votes   *big.Int
+		Rewards *big.Int
 	}
 
-	fmt.Printf("Current - Votes: %s, Rewards: %s\n", blockchainData.Votes.String(), blockchainData.Rewards.String())
-	fmt.Printf("Previous - Votes: %s, Rewards: %s\n", previousData.Votes.String(), previousData.Rewards.String())
+	// Check each peer ID with rate limiting (1 second delay between requests)
+	for i, peerID := range t.PeerIDs {
+		fmt.Printf("Checking peer ID %d/%d: %s\n", i+1, len(t.PeerIDs), peerID)
 
-	// Check if votes or rewards have increased
-	votesIncreased := blockchainData.Votes.Cmp(previousData.Votes) > 0
-	rewardsIncreased := blockchainData.Rewards.Cmp(previousData.Rewards) > 0
-
-	if votesIncreased || rewardsIncreased {
-		fmt.Println("Changes detected! Sending notification...")
-
-		// Create notification message
-		message := fmt.Sprintf(`🤖 <b>G-Swarm Node Update</b>
-
-📊 <b>Node Information:</b>
-• <b>Peer ID:</b> <code>%s</code>
-• <b>User ID:</b> %s
-
-🏆 <b>Blockchain Stats:</b>
-• <b>Votes:</b> %s 🗳️%s
-• <b>Rewards:</b> %s 💰%s
-
-✨ <b>Status:</b> Progress Detected!`,
-			userData.Address,
-			userData.UserID,
-			blockchainData.Votes.String(),
-			func() string {
-				if votesIncreased {
-					voteDiff := new(big.Int).Sub(blockchainData.Votes, previousData.Votes)
-					return fmt.Sprintf(" <i>(+%s)</i>", voteDiff.String())
-				}
-				return ""
-			}(),
-			blockchainData.Rewards.String(),
-			func() string {
-				if rewardsIncreased {
-					rewardDiff := new(big.Int).Sub(blockchainData.Rewards, previousData.Rewards)
-					return fmt.Sprintf(" <i>(+%s)</i>", rewardDiff.String())
-				}
-				return ""
-			}())
-
-		// Send the notification
-		if err := t.sendTelegramMessageHTML(message); err != nil {
-			fmt.Printf("Failed to send Telegram message: %v\n", err)
-			return err
+		// Query blockchain data for this peer ID
+		blockchainData, err := t.GetBlockchainDataForPeerID(peerID)
+		if err != nil {
+			fmt.Printf("Warning: Could not get blockchain data for peer ID %s: %v\n", peerID, err)
+			continue
 		}
 
-		fmt.Println("Notification sent successfully!")
-	} else {
-		fmt.Println("No changes detected. Skipping notification.")
+		// Add to totals
+		totalVotes.Add(totalVotes, blockchainData.Votes)
+		totalRewards.Add(totalRewards, blockchainData.Rewards)
+
+		// Store per-peer data
+		peerData = append(peerData, struct {
+			PeerID  string
+			Votes   *big.Int
+			Rewards *big.Int
+		}{
+			PeerID:  peerID,
+			Votes:   blockchainData.Votes,
+			Rewards: blockchainData.Rewards,
+		})
+
+		// Rate limiting: 1 second delay between requests
+		if i < len(t.PeerIDs)-1 { // Don't delay after the last request
+			time.Sleep(1 * time.Second)
+		}
 	}
 
-	// Update and save the previous data
-	previousData.Votes = blockchainData.Votes
-	previousData.Rewards = blockchainData.Rewards
-	previousData.LastCheck = time.Now()
+	// Check if there are any changes
+	votesChanged := totalVotes.Cmp(previousData.Votes) != 0
+	rewardsChanged := totalRewards.Cmp(previousData.Rewards) != 0
 
-	if err := t.savePreviousData(previousData); err != nil {
-		fmt.Printf("Warning: Could not save previous data: %v\n", err)
+	if votesChanged || rewardsChanged {
+		fmt.Printf("Changes detected!\n")
+		fmt.Printf("Previous - Votes: %s, Rewards: %s\n", previousData.Votes.String(), previousData.Rewards.String())
+		fmt.Printf("Current  - Votes: %s, Rewards: %s\n", totalVotes.String(), totalRewards.String())
+
+		// Build per-peer breakdown
+		var peerBreakdown strings.Builder
+		for i, data := range peerData {
+			peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, data.PeerID))
+			peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s\n", data.Votes.String()))
+			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s\n\n", data.Rewards.String()))
+		}
+
+		// Prepare notification message
+		message := fmt.Sprintf(`🚀 <b>G-Swarm Update</b>
+
+📊 <b>Blockchain Data Update</b>
+
+👤 <b>EOA Address:</b> <code>%s</code>
+🔍 <b>Peer IDs Monitored:</b> %d
+
+📈 <b>Total Votes:</b> %s %s
+💰 <b>Total Rewards:</b> %s %s
+
+📋 <b>Per-Peer Breakdown:</b>
+%s
+⏰ <b>Last Check:</b> %s`,
+			t.UserEOAAddress,
+			len(t.PeerIDs),
+			totalVotes.String(),
+			getChangeIndicator(previousData.Votes, totalVotes),
+			totalRewards.String(),
+			getChangeIndicator(previousData.Rewards, totalRewards),
+			peerBreakdown.String(),
+			time.Now().Format("2006-01-02 15:04:05"))
+
+		// Send notification
+		if err := t.sendTelegramMessageHTML(message); err != nil {
+			fmt.Printf("Failed to send Telegram message: %v\n", err)
+		}
+
+		// Update previous data
+		previousData.Votes = totalVotes
+		previousData.Rewards = totalRewards
+		previousData.LastCheck = time.Now()
+
+		// Save updated data
+		if err := t.savePreviousData(previousData); err != nil {
+			fmt.Printf("Warning: Could not save previous data: %v\n", err)
+		}
 	} else {
-		fmt.Println("Previous data saved successfully.")
+		fmt.Printf("No changes detected. Votes: %s, Rewards: %s\n", totalVotes.String(), totalRewards.String())
 	}
 
 	return nil
+}
+
+// GetBlockchainDataForPeerID gets blockchain data for a specific peer ID
+func (t *TelegramService) GetBlockchainDataForPeerID(peerID string) (*BlockchainData, error) {
+	fmt.Printf("Querying blockchain data for peer ID: %s\n", peerID)
+
+	// Try both contract addresses, but only use the first one that returns data
+	// to avoid double-counting
+	contracts := []string{coordAddrMath, coordAddrMathHard}
+	var totalVotes *big.Int = big.NewInt(0)
+	var totalRewards *big.Int = big.NewInt(0)
+
+	for _, contract := range contracts {
+		var contractHasData bool
+
+		// For votes, we pass the peer ID directly
+		if v, err := t.queryUserVotes(peerID, contract); err == nil && v.Cmp(big.NewInt(0)) > 0 {
+			totalVotes = v // Use only this value, don't add
+			fmt.Printf("Found votes for peer ID %s on contract %s: %s\n", peerID, contract, v.String())
+			contractHasData = true
+		}
+
+		// For rewards, we pass the peer ID as part of the array
+		peerIds := []string{peerID}
+		if r, err := t.queryUserRewards(peerIds, contract); err == nil && r.Cmp(big.NewInt(0)) > 0 {
+			totalRewards = r // Use only this value, don't add
+			fmt.Printf("Found rewards for peer ID %s on contract %s: %s\n", peerID, contract, r.String())
+			contractHasData = true
+		}
+
+		// If we found any data on this contract, use it and don't check the next one
+		if contractHasData {
+			fmt.Printf("Using data from contract %s for peer ID %s\n", contract, peerID)
+			break
+		}
+	}
+
+	// Get ETH balance for the EOA address (only if it's an Ethereum address)
+	var balance *big.Int = big.NewInt(0)
+	if strings.HasPrefix(t.UserEOAAddress, "0x") && len(t.UserEOAAddress) == 42 {
+		if b, err := t.queryUserBalance(t.UserEOAAddress); err == nil {
+			balance = b
+			fmt.Printf("Found balance for EOA %s: %s\n", t.UserEOAAddress, balance.String())
+		}
+	} else {
+		fmt.Printf("Skipping balance query - not an Ethereum address: %s\n", t.UserEOAAddress)
+	}
+
+	return &BlockchainData{
+		Votes:   totalVotes,
+		Rewards: totalRewards,
+		Balance: balance,
+	}, nil
 }
 
 // queryUserVotes queries the smart contract for user votes using Alchemy API
@@ -512,21 +502,22 @@ func (t *TelegramService) queryUserVotes(peerId string, contractAddress string) 
 	// Combine all parts
 	data := methodID + offset + stringLength + stringHex
 
-	// Create the JSON-RPC request
+	// Create the eth_call request
 	request := AlchemyRequest{
 		JSONRPC: "2.0",
+		ID:      1,
 		Method:  "eth_call",
 		Params: []interface{}{
 			map[string]interface{}{
-				"to":   contractAddress,
-				"data": data,
+				"data":  data,
+				"to":    coordAddrMath, // Use the small swarm contract
+				"value": "0x0",
 			},
 			"latest",
 		},
-		ID: 1,
 	}
 
-	// Make the request to Alchemy API
+	// Make the request
 	result, err := t.makeAlchemyRequest(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call Alchemy API: %w", err)
@@ -589,21 +580,22 @@ func (t *TelegramService) queryUserRewards(peerIds []string, contractAddress str
 	// Combine all parts
 	data := methodID + offset + arrayLength + stringData
 
-	// Create the JSON-RPC request
+	// Create the eth_call request
 	request := AlchemyRequest{
 		JSONRPC: "2.0",
+		ID:      1,
 		Method:  "eth_call",
 		Params: []interface{}{
 			map[string]interface{}{
-				"to":   contractAddress,
-				"data": data,
+				"data":  data,
+				"to":    coordAddrMath, // Use the small swarm contract
+				"value": "0x0",
 			},
 			"latest",
 		},
-		ID: 1,
 	}
 
-	// Make the request to Alchemy API
+	// Make the request
 	result, err := t.makeAlchemyRequest(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call Alchemy API: %w", err)
@@ -1001,4 +993,151 @@ ETH: <code>0xA22e20BA3336f5Bd6eCE959F5ac4083C9693e316</code>
 Thank you for using G-Swarm Monitor! 🚀`
 
 	return t.sendTelegramMessageHTML(message)
+}
+
+// promptForEOAAddress prompts the user for their EOA address
+func promptForEOAAddress() (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Enter your EOA address (from Gensyn dashboard): ")
+	address, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	address = strings.TrimSpace(address)
+
+	if address == "" {
+		return "", fmt.Errorf("address cannot be empty")
+	}
+
+	return address, nil
+}
+
+// getPeerIDs fetches the peer IDs associated with the given EOA address
+func (t *TelegramService) getPeerIDs(eoaAddress string) ([]string, error) {
+	// Use the correct function selector for getPeerId: 0xb894a469
+	// Function signature: getPeerId(eoas address[]) returns (string[][])
+	// We need to encode an array of addresses
+
+	// Remove 0x prefix if present and pad to 32 bytes
+	addressParam := strings.TrimPrefix(eoaAddress, "0x")
+	// Pad the address to 32 bytes (64 hex chars)
+	addressParam = fmt.Sprintf("%064s", addressParam)
+
+	// For a single address in an array, we need to encode it as:
+	// - offset to array data (32 bytes)
+	// - array length (32 bytes)
+	// - address data (32 bytes)
+	offset := "0000000000000000000000000000000000000000000000000000000000000020"      // offset to array data
+	arrayLength := "0000000000000000000000000000000000000000000000000000000000000001" // array length = 1
+	addressData := addressParam                                                       // the actual address
+
+	// Construct the data field: function selector + encoded array
+	data := "0xb894a469" + offset + arrayLength + addressData
+
+	fmt.Printf("Debug: Calling getPeerId with data: %s\n", data)
+	fmt.Printf("Debug: Address parameter: %s\n", addressParam)
+
+	// Try both contract addresses
+	contracts := []string{coordAddrMath, coordAddrMathHard}
+
+	for _, contract := range contracts {
+		fmt.Printf("Debug: Trying contract: %s\n", contract)
+
+		// Create the eth_call request
+		request := AlchemyRequest{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "eth_call",
+			Params: []interface{}{
+				map[string]interface{}{
+					"data":  data,
+					"to":    contract,
+					"value": "0x0",
+				},
+				"latest",
+			},
+		}
+
+		// Make the request
+		result, err := t.makeAlchemyRequest(request)
+		if err != nil {
+			fmt.Printf("Debug: Error with contract %s: %v\n", contract, err)
+			continue
+		}
+
+		// Parse the result
+		resultStr, ok := result.(string)
+		if !ok {
+			fmt.Printf("Debug: Unexpected result type: %T\n", result)
+			continue
+		}
+
+		fmt.Printf("Debug: Got result: %s\n", resultStr)
+
+		// Use ABI-aware decoder to extract peer IDs
+		peerIDs, err := decodePeerIDs(resultStr)
+		if err != nil {
+			fmt.Printf("Debug: Failed to decode peer IDs from contract %s: %v\n", contract, err)
+			continue
+		}
+
+		if len(peerIDs) > 0 {
+			fmt.Printf("Found %d peer IDs for address %s on contract %s\n", len(peerIDs), eoaAddress, contract)
+			for i, peerID := range peerIDs {
+				fmt.Printf("  %d: %s\n", i+1, peerID)
+			}
+			return peerIDs, nil
+		} else {
+			fmt.Printf("Debug: No peer IDs found for this EOA on contract %s\n", contract)
+		}
+	}
+
+	return nil, fmt.Errorf("no peer IDs found for address: %s on any contract", eoaAddress)
+}
+
+// getChangeIndicator returns an emoji indicating if a value increased, decreased, or stayed the same
+func getChangeIndicator(previous, current *big.Int) string {
+	cmp := current.Cmp(previous)
+	if cmp > 0 {
+		return "📈"
+	} else if cmp < 0 {
+		return "📉"
+	}
+	return "➡️"
+}
+
+// decodePeerIDs uses ABI-aware decoding to extract peer IDs from the contract response
+func decodePeerIDs(rawHex string) ([]string, error) {
+	// strip "0x"
+	raw := strings.TrimPrefix(rawHex, "0x")
+
+	// ABI-bytes are big-endian hex
+	data, err := hex.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("hex decode: %w", err)
+	}
+
+	// parse ABI
+	parsed, err := abi.JSON(strings.NewReader(coordABI))
+	if err != nil {
+		return nil, fmt.Errorf("ABI parse: %w", err)
+	}
+
+	// unpack; returns []interface{} where the first (and only) element is [][]string
+	outs, err := parsed.Unpack("getPeerId", data)
+	if err != nil {
+		return nil, fmt.Errorf("ABI unpack: %w", err)
+	}
+
+	// type-assert
+	raw2d, ok := outs[0].([][]string)
+	if !ok {
+		return nil, fmt.Errorf("unexpected output type %T, want [][]string", outs[0])
+	}
+
+	// Since you queried with a single address, take raw2d[0]
+	if len(raw2d) == 0 {
+		return nil, nil // no peer IDs
+	}
+	return raw2d[0], nil
 }

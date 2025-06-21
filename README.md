@@ -48,12 +48,7 @@ After this, you can run `gswarm` from anywhere (if your Go bin directory is in y
 
 ### Basic Usage
 
-1. **Navigate to your Gensyn RL Swarm directory** (where your RL Swarm code and config are located):
-   ```bash
-   cd /path/to/your/gensyn-rl-swarm
-   ```
-
-2. **Run the supervisor**:
+1. **Run the supervisor**:
    ```bash
    gswarm
    ```
@@ -69,7 +64,6 @@ The supervisor will:
 When run without any flags, the supervisor will prompt for all necessary configuration:
 
 ```bash
-cd /path/to/gensyn-rl-swarm
 gswarm
 ```
 
@@ -200,6 +194,7 @@ GSwarm includes a powerful Telegram monitoring service that provides real-time n
 - 💎 **Balance Updates**: Monitor your wallet balance changes
 - 📈 **Change Detection**: Only notified when values actually change
 - 🛡️ **Secure Configuration**: Local config file storage
+- 🔍 **Peer ID Monitoring**: Track all peer IDs associated with your EOA address
 
 ### Setup Instructions
 
@@ -221,14 +216,19 @@ GSwarm includes a powerful Telegram monitoring service that provides real-time n
    ```
 4. **Find your chat ID** in the response (look for `"chat":{"id":123456789}`)
 
-#### 3. Run the Telegram Service
+#### 3. Get Your EOA Address
+
+1. **Visit the Gensyn Dashboard** at https://dashboard.gensyn.ai
+2. **Log in** to your account
+3. **Navigate to your profile or settings** section
+4. **Copy your EOA (Externally Owned Account) address** - this is your Ethereum wallet address
+5. **The address should start with "0x"** and be 42 characters long (e.g., `0x1234567890abcdef...`)
+
+#### 4. Run the Telegram Service
 
 ```bash
-# Basic usage (will prompt for bot token and chat ID)
+# Basic usage (will prompt for bot token, chat ID, and EOA address)
 gswarm --telegram
-
-# With custom user data path
-gswarm --telegram --user-data-path /path/to/userData.json
 
 # With custom config path
 gswarm --telegram --telegram-config-path /path/to/telegram-config.json
@@ -242,7 +242,6 @@ gswarm --telegram --update-telegram-config
 | Flag | Description | Default | Environment Variable |
 |------|-------------|---------|---------------------|
 | `--telegram` | Start Telegram monitoring service | `false` | `GSWARM_TELEGRAM` |
-| `--user-data-path` | Path to userData.json file | Auto-detected | `GSWARM_USER_DATA_PATH` |
 | `--telegram-config-path` | Path to telegram-config.json | `telegram-config.json` | `GSWARM_TELEGRAM_CONFIG_PATH` |
 | `--update-telegram-config` | Force update of Telegram config | `false` | `GSWARM_UPDATE_TELEGRAM_CONFIG` |
 
@@ -265,10 +264,8 @@ gswarm --telegram
 # Update configuration
 gswarm --telegram --update-telegram-config
 
-# Custom paths
-gswarm --telegram \
-  --user-data-path /path/to/userData.json \
-  --telegram-config-path /path/to/telegram-config.json
+# Custom config path
+gswarm --telegram --telegram-config-path /path/to/telegram-config.json
 ```
 
 ### What You'll Receive
@@ -278,25 +275,32 @@ The Telegram service monitors and notifies you about:
 - **Vote Changes**: When your vote count increases or decreases
 - **Reward Changes**: When your accumulated rewards change
 - **Balance Changes**: When your wallet balance changes
+- **Peer ID Activity**: Monitoring of all peer IDs associated with your EOA address
 - **Welcome Message**: Initial setup confirmation
 
 ### Sample Notifications
 
 ```
-🎯 Vote Update
-Previous: 1,234 votes
-Current: 1,456 votes
-Change: +222 votes (+18.0%)
+🚀 G-Swarm Update
 
-💰 Reward Update  
-Previous: 0.5 ETH
-Current: 0.75 ETH
-Change: +0.25 ETH (+50.0%)
+📊 Blockchain Data Update
 
-💎 Balance Update
-Previous: 2.1 ETH
-Current: 2.3 ETH
-Change: +0.2 ETH (+9.5%)
+👤 EOA Address: 0x1234567890abcdef...
+🔍 Peer IDs Monitored: 4
+
+📈 Total Votes: 1,456 📈
+💰 Total Rewards: 0.75 ETH 📈
+
+📋 Per-Peer Breakdown:
+🔹 Peer 1: QmZkyXja166VBTMU76xLR17XKAny9kAkFgx4fNpoceQ8LT
+   📈 Votes: 22
+   💰 Rewards: 3075
+
+🔹 Peer 2: QmYJeqmiqLNC5cosqE76wZSVdBEHL5Mq9zwFUX61d2fAzn
+   📈 Votes: 0
+   💰 Rewards: 0
+
+⏰ Last Check: 2025-06-20 20:05:23
 ```
 
 ### Troubleshooting Telegram
@@ -315,9 +319,15 @@ Change: +0.2 ETH (+9.5%)
    - Verify the chat ID is correct
    - Ensure you have blockchain activity to monitor
 
-4. **"userData.json not found"**
-   - Specify the correct path with `--user-data-path`
-   - The service will search common locations automatically
+4. **"EOA address not found"**
+   - Get your EOA address from the Gensyn dashboard
+   - Make sure the address starts with "0x" and is 42 characters long
+   - Verify the address is correct
+
+5. **"No peer IDs found"**
+   - Ensure your EOA address is correct
+   - Check that you have active peer IDs on the Gensyn network
+   - The service will automatically detect and monitor all your peer IDs
 
 ## 🔧 How It Works
 
