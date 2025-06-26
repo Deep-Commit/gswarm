@@ -21,12 +21,11 @@ import (
 
 // Blockchain constants
 const (
-	blockscoutURL     = "https://gensyn-testnet.explorer.alchemy.com/api"
-	alchemyAPIURL     = "https://gensyn-testnet.g.alchemy.com/v2"
-	alchemyPublicURL  = "https://gensyn-testnet.g.alchemy.com/public"
-	rpcURL            = "https://gensyn-testnet.g.alchemy.com/public"
-	coordAddrMath     = "0x69C6e1D608ec64885E7b185d39b04B491a71768C" // Proxy contract with activity
-	coordAddrMathHard = "0x6947c6E196a48B77eFa9331EC1E3e45f3Ee5Fd58"
+	blockscoutURL    = "https://gensyn-testnet.explorer.alchemy.com/api"
+	alchemyAPIURL    = "https://gensyn-testnet.g.alchemy.com/v2"
+	alchemyPublicURL = "https://gensyn-testnet.g.alchemy.com/public"
+	rpcURL           = "https://gensyn-testnet.g.alchemy.com/public"
+	coordAddrGenRL   = "0xFaD7C5e93f28257429569B854151A1B8DCD404c2" // GenRL-Swarm contract
 )
 
 // ABI for the getPeerId function
@@ -436,7 +435,7 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string) (*Blockchain
 
 	// Try both contract addresses, but only use the first one that returns data
 	// to avoid double-counting
-	contracts := []string{coordAddrMath, coordAddrMathHard}
+	contracts := []string{coordAddrGenRL}
 	var totalVotes *big.Int = big.NewInt(0)
 	var totalRewards *big.Int = big.NewInt(0)
 
@@ -516,7 +515,7 @@ func (t *TelegramService) queryUserVotes(peerId string, contractAddress string) 
 		Params: []interface{}{
 			map[string]interface{}{
 				"data":  data,
-				"to":    coordAddrMath, // Use the small swarm contract
+				"to":    coordAddrGenRL, // Use the GenRL-Swarm contract
 				"value": "0x0",
 			},
 			"latest",
@@ -594,7 +593,7 @@ func (t *TelegramService) queryUserRewards(peerIds []string, contractAddress str
 		Params: []interface{}{
 			map[string]interface{}{
 				"data":  data,
-				"to":    coordAddrMath, // Use the small swarm contract
+				"to":    coordAddrGenRL, // Use the GenRL-Swarm contract
 				"value": "0x0",
 			},
 			"latest",
@@ -723,7 +722,7 @@ func (t *TelegramService) GetBlockchainData(userAddress string) (*BlockchainData
 	fmt.Printf("Querying blockchain data for address: %s\n", userAddress)
 
 	// Try both contract addresses
-	contracts := []string{coordAddrMath, coordAddrMathHard}
+	contracts := []string{coordAddrGenRL}
 
 	var votes *big.Int
 	var rewards *big.Int
@@ -1044,7 +1043,7 @@ func (t *TelegramService) getPeerIDs(eoaAddress string) ([]string, error) {
 	fmt.Printf("Debug: Address parameter: %s\n", addressParam)
 
 	// Try both contract addresses
-	contracts := []string{coordAddrMath, coordAddrMathHard}
+	contracts := []string{coordAddrGenRL}
 
 	for _, contract := range contracts {
 		fmt.Printf("Debug: Trying contract: %s\n", contract)

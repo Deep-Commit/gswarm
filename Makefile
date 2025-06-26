@@ -17,7 +17,7 @@ BUILD_DIR := build
 # Go files
 GO_FILES := $(shell find . -name "*.go" -type f)
 
-.PHONY: all build clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help token-cleanup
+.PHONY: all build clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help
 
 # Default target
 all: build
@@ -129,13 +129,6 @@ lint-full: lint-vet lint-staticcheck
 		echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
 	fi
 
-# Token management targets
-token-cleanup:
-	@echo "Cleaning up expired tokens..."
-	@rm -f ~/.gswarm/tokens.json
-	@rm -f /tmp/gswarm.pid
-	@echo "Token cleanup complete!"
-
 # Show version information
 version:
 	@echo "GSwarm version: $(VERSION)"
@@ -144,10 +137,10 @@ version:
 
 # Show help
 help:
-	@echo "GSwarm Makefile"
+	@echo "GSwarm Makefile - Telegram Monitoring Service"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  build        - Build the application"
+	@echo "  build        - Build the Telegram monitoring service"
 	@echo "  build-all    - Build for all platforms (Linux, macOS, Windows)"
 	@echo "  install      - Install the application"
 	@echo "  clean        - Clean build artifacts"
@@ -162,7 +155,6 @@ help:
 	@echo "  lint-vet     - Run go vet (basic Go toolchain checks)"
 	@echo "  lint-staticcheck - Run Staticcheck (advanced static analysis)"
 	@echo "  lint-full    - Run full linting suite with extended timeout"
-	@echo "  token-cleanup - Clean up expired tokens"
 	@echo "  version      - Show version information"
 	@echo "  help         - Show this help message"
 	@echo ""
@@ -178,10 +170,11 @@ help:
 	@echo "  - Coverage: Enforced minimum coverage with HTML reports"
 	@echo "  - Race detection: All tests run with -race flag"
 	@echo ""
-	@echo "Token Management:"
-	@echo "  - Enhanced supervisor with automatic token expiration detection"
-	@echo "  - External monitoring script for continuous operation"
-	@echo "  - Token manager for advanced token handling"
+	@echo "Telegram Monitoring Service:"
+	@echo "  - Real-time blockchain monitoring for Gensyn AI"
+	@echo "  - Vote and reward tracking with change detection"
+	@echo "  - Peer ID monitoring and balance updates"
+	@echo "  - Secure local configuration management"
 	@echo ""
 	@echo "Version: $(VERSION)"
 	@echo "Build date: $(BUILD_DATE)"
