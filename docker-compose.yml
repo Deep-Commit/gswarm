@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.discord
+      args:
+        - VERSION=${VERSION:-1.0.0}
+        - BUILD_DATE=${BUILD_DATE:-unknown}
+        - GIT_COMMIT=${GIT_COMMIT:-unknown}
+    container_name: gswarm-discord-bot
+    restart: unless-stopped
+    environment:
+      # Discord Bot Configuration
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
+      - DISCORD_ROLE_ID=${DISCORD_ROLE_ID}
+      
+      # G-Swarm API Configuration
+      - GSWARM_API_URL=${GSWARM_API_URL:-https://gswarm.dev/api}
+      - GSWARM_API_SECRET=${GSWARM_API_SECRET}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "discordd"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - gswarm-network
+    labels:
+      - "com.gswarm.service=discord-bot"
+      - "com.gswarm.version=${VERSION:-1.0.0}"
+
+  # Optional: Redis for caching (if needed for future features)
+  redis:
+    image: redis:7-alpine
+    container_name: gswarm-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - gswarm-network
+    profiles:
+      - cache
+
+networks:
+  gswarm-network:
+    driver: bridge
+    name: gswarm-network
+
+volumes:
+  redis-data:
+    driver: local 

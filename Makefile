@@ -8,8 +8,9 @@ GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 # Build flags
 LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildDate=$(BUILD_DATE) -X main.GitCommit=$(GIT_COMMIT)"
 
-# Binary name
-BINARY_NAME := gswarm
+# Binary names
+TELEGRAM_BINARY := gswarm
+DISCORD_BINARY := discordd
 
 # Build directory
 BUILD_DIR := build
@@ -17,17 +18,27 @@ BUILD_DIR := build
 # Go files
 GO_FILES := $(shell find . -name "*.go" -type f)
 
-.PHONY: all build clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help
+.PHONY: all build build-telegram build-discord clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help
 
 # Default target
 all: build
 
-# Build the application
-build:
-	@echo "Building GSwarm version $(VERSION)..."
+# Build both applications
+build: build-telegram build-discord
+
+# Build the Telegram bot
+build-telegram:
+	@echo "Building GSwarm Telegram Bot version $(VERSION)..."
 	@mkdir -p $(BUILD_DIR)
-	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gswarm
-	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY) ./cmd/gswarm
+	@echo "Telegram bot build complete: $(BUILD_DIR)/$(TELEGRAM_BINARY)"
+
+# Build the Discord bot
+build-discord:
+	@echo "Building GSwarm Discord Bot version $(VERSION)..."
+	@mkdir -p $(BUILD_DIR)
+	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY) ./cmd/discordd
+	@echo "Discord bot build complete: $(BUILD_DIR)/$(DISCORD_BINARY)"
 
 # Build for all platforms
 build-all: clean
@@ -36,25 +47,32 @@ build-all: clean
 	
 	# Linux
 	@echo "Building for Linux..."
-	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/gswarm
-	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gswarm
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-linux-amd64 ./cmd/gswarm
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-linux-amd64 ./cmd/discordd
+	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-linux-arm64 ./cmd/gswarm
+	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-linux-arm64 ./cmd/discordd
 	
 	# macOS
 	@echo "Building for macOS..."
-	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/gswarm
-	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/gswarm
+	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-darwin-amd64 ./cmd/gswarm
+	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-darwin-amd64 ./cmd/discordd
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-darwin-arm64 ./cmd/gswarm
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-darwin-arm64 ./cmd/discordd
 	
 	# Windows
 	@echo "Building for Windows..."
-	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/gswarm
+	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-windows-amd64.exe ./cmd/gswarm
+	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-windows-amd64.exe ./cmd/discordd
 	
 	@echo "Build complete for all platforms!"
 
-# Install the application
+# Install the applications
 install: build
 	@echo "Installing GSwarm..."
-	@rm -f $(shell go env GOPATH)/bin/$(BINARY_NAME)
-	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(BINARY_NAME) $(shell go env GOPATH)/bin/$(BINARY_NAME)
+	@rm -f $(shell go env GOPATH)/bin/$(TELEGRAM_BINARY)
+	@rm -f $(shell go env GOPATH)/bin/$(DISCORD_BINARY)
+	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(TELEGRAM_BINARY) $(shell go env GOPATH)/bin/$(TELEGRAM_BINARY)
+	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(DISCORD_BINARY) $(shell go env GOPATH)/bin/$(DISCORD_BINARY)
 	@echo "Installation complete!"
 
 # Clean build artifacts
