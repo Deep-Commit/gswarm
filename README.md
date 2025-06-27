@@ -16,6 +16,65 @@ A dedicated Go-based Telegram monitoring service for Gensyn AI that provides rea
 - 🛡️ **Secure Configuration**: Local config file storage
 - 🔍 **Peer ID Monitoring**: Track all peer IDs associated with your EOA address
 - ⏰ **Continuous Monitoring**: Checks every 5 minutes for changes
+- 🤖 **Discord Integration**: Optional verification system with purple role assignment
+- 🔐 **Secure Verification**: Time-limited codes for Discord community access
+
+## 🔐 Discord Verification (Optional)
+
+GSwarm includes an optional Discord verification system that allows you to get verified in the G-Swarm Discord community. **Verification is completely optional and not required to use the monitoring service.**
+
+### What is Discord Verification?
+
+The Discord verification system allows you to:
+- Get a special purple "GSwarm" role in the Discord server
+- Access verified-only channels and features
+- Show your verification status to other community members
+- Display your node statistics and ranking information
+
+### How to Get Verified
+
+1. **Start the Telegram bot** and use the `/verify` command
+2. **Receive a verification code** (valid for 15 minutes)
+3. **Join the Discord server**: [https://discord.gg/gswarm](https://discord.gg/gswarm)
+4. **Use the verification command**: `/verify <code>` in Discord
+5. **Get automatically assigned** the purple "GSwarm" role
+
+### Verification Features
+
+- **Cosmetic Role**: The purple "GSwarm" role is purely cosmetic with no special permissions
+- **Automatic Assignment**: The Discord bot automatically assigns the role upon successful verification
+- **No Conflicts**: The verification role won't interfere with your existing role colors
+- **Fallback Support**: If verification fails, you can still use all monitoring features
+
+### Verification Requirements
+
+- Active Gensyn AI node with peer IDs
+- Valid EOA address registered with Gensyn
+- Telegram bot access for verification codes
+- Discord account to join the server
+
+### Important Notes
+
+- **Verification is optional**: You can use all monitoring features without verification
+- **No special permissions**: The verification role is cosmetic only
+- **Privacy focused**: Only your verification status is shared, not personal data
+- **Community driven**: This is a community feature, not an official Gensyn requirement
+
+### Troubleshooting Verification
+
+1. **"Verification code expired"**
+   - Generate a new code with `/verify` in Telegram
+   - Codes expire after 15 minutes for security
+
+2. **"Verification failed"**
+   - Ensure your EOA address is correct
+   - Check that you have active peer IDs
+   - Verify the code was entered correctly
+
+3. **"Role not assigned"**
+   - Check that the Discord bot has "Manage Roles" permission
+   - Ensure the bot's role is positioned correctly in the hierarchy
+   - Contact server administrators if issues persist
 
 ## 🚀 Quick Start
 

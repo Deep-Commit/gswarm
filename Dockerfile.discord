@@ -1,0 +1,61 @@
+# Build stage
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build arguments
+ARG VERSION=1.0.0
+ARG BUILD_DATE=unknown
+ARG GIT_COMMIT=unknown
+
+# Build the Discord bot
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-X main.Version=${VERSION} -X main.BuildDate=${BUILD_DATE} -X main.GitCommit=${GIT_COMMIT} -s -w" \
+    -o discordd \
+    ./cmd/discordd
+
+# Runtime stage
+FROM alpine:3.19
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata procps
+
+# Create non-root user
+RUN addgroup -g 1001 -S gswarm && \
+    adduser -u 1001 -S gswarm -G gswarm
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /app/discordd .
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/config && \
+    chown -R gswarm:gswarm /app
+
+# Switch to non-root user
+USER gswarm
+
+# Expose port (if needed for health checks)
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pgrep -f discordd || exit 1
+
+# Default command
+ENTRYPOINT ["./discordd"] 

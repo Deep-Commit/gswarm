@@ -28,6 +28,11 @@ const (
 	coordAddrGenRL   = "0xFaD7C5e93f28257429569B854151A1B8DCD404c2" // GenRL-Swarm contract
 )
 
+// API constants
+const (
+	defaultAPIURL = "https://gswarm.dev/api" // Change this for custom backends
+)
+
 // ABI for the getPeerId function
 const coordABI = `[{"constant":true,"inputs":[{"name":"eoaAddresses","type":"address[]"}],"name":"getPeerId","outputs":[{"name":"","type":"string[][]"}],"stateMutability":"view","type":"function"}]`
 
@@ -37,6 +42,7 @@ type TelegramConfig struct {
 	BotToken    string `json:"bot_token"`
 	ChatID      string `json:"chat_id"`
 	WelcomeSent bool   `json:"welcome_sent"`
+	APIURL      string `json:"api_url"`
 }
 
 const DefaultConfigPath = "telegram-config.json"
@@ -98,6 +104,7 @@ func promptForTelegramConfig() (*TelegramConfig, error) {
 	return &TelegramConfig{
 		BotToken: botToken,
 		ChatID:   chatID,
+		APIURL:   defaultAPIURL,
 	}, nil
 }
 
@@ -128,8 +135,8 @@ func loadTelegramConfig(path string) (*TelegramConfig, error) {
 	return &cfg, nil
 }
 
-// ensureTelegramConfig loads or prompts for config
-func (t *TelegramService) ensureTelegramConfig() error {
+// EnsureTelegramConfig loads or prompts for config
+func (t *TelegramService) EnsureTelegramConfig() error {
 	cfgPath := t.ConfigPath
 	if cfgPath == "" {
 		cfgPath = DefaultConfigPath
@@ -149,6 +156,13 @@ func (t *TelegramService) ensureTelegramConfig() error {
 	// Try to load config
 	cfg, err := loadTelegramConfig(cfgPath)
 	if err == nil {
+		// Ensure API URL is set
+		if cfg.APIURL == "" {
+			cfg.APIURL = defaultAPIURL
+			if err := saveTelegramConfig(cfgPath, cfg); err != nil {
+				return err
+			}
+		}
 		t.Config = cfg
 		return nil
 	}
@@ -225,7 +239,7 @@ func (t *TelegramService) Run() error {
 	printBanner()
 
 	fmt.Println("Starting Telegram monitoring service...")
-	if err := t.ensureTelegramConfig(); err != nil {
+	if err := t.EnsureTelegramConfig(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return err
 	}
@@ -233,26 +247,7 @@ func (t *TelegramService) Run() error {
 
 	// Send welcome message if not sent before
 	if !t.Config.WelcomeSent {
-		fmt.Println("Sending welcome message...")
-		if err := t.sendWelcomeMessage(); err != nil {
-			fmt.Printf("Warning: Could not send welcome message: %v\n", err)
-		} else {
-			// Mark welcome message as sent and save config
-			t.Config.WelcomeSent = true
-
-			// Determine the config path to save to
-			configPath := t.ConfigPath
-			if configPath == "" {
-				configPath = DefaultConfigPath
-			}
-
-			fmt.Printf("Saving updated config to: %s\n", configPath)
-			if err := saveTelegramConfig(configPath, t.Config); err != nil {
-				fmt.Printf("Warning: Could not save updated config: %v\n", err)
-			} else {
-				fmt.Println("Welcome message sent and config updated!")
-			}
-		}
+		fmt.Println("Welcome message will be sent after collecting EOA address and peer IDs...")
 	} else {
 		fmt.Println("Welcome message already sent previously.")
 	}
@@ -267,13 +262,47 @@ func (t *TelegramService) Run() error {
 
 	// Fetch peer IDs for the EOA address
 	fmt.Printf("Fetching peer IDs for address: %s\n", eoaAddress)
-	peerIDs, err := t.getPeerIDs(eoaAddress)
+	peerIDs, err := t.GetPeerIDs(eoaAddress)
 	if err != nil {
 		return fmt.Errorf("failed to fetch peer IDs: %w", err)
 	}
 	t.PeerIDs = peerIDs
 
 	fmt.Printf("Successfully loaded %d peer IDs for monitoring\n", len(peerIDs))
+
+	// Now generate verification code and send welcome message if needed
+	if !t.Config.WelcomeSent {
+		fmt.Println("Generating verification code and sending welcome message...")
+		verificationCode, err := t.IssueVerificationCode(t.Config.ChatID)
+		if err != nil {
+			fmt.Printf("Warning: Could not generate verification code: %v\n", err)
+			// Fallback to regular welcome message without verification code
+			if err := t.sendWelcomeMessage(""); err != nil {
+				fmt.Printf("Warning: Could not send welcome message: %v\n", err)
+			}
+		} else {
+			// Send welcome message with verification instructions
+			if err := t.sendWelcomeMessage(verificationCode.Code); err != nil {
+				fmt.Printf("Warning: Could not send welcome message: %v\n", err)
+			} else {
+				// Mark welcome message as sent and save config
+				t.Config.WelcomeSent = true
+
+				// Determine the config path to save to
+				configPath := t.ConfigPath
+				if configPath == "" {
+					configPath = DefaultConfigPath
+				}
+
+				fmt.Printf("Saving updated config to: %s\n", configPath)
+				if err := saveTelegramConfig(configPath, t.Config); err != nil {
+					fmt.Printf("Warning: Could not save updated config: %v\n", err)
+				} else {
+					fmt.Println("Welcome message with verification instructions sent and config updated!")
+				}
+			}
+		}
+	}
 
 	// Load previous data from persistent storage
 	previousData, err := t.loadPreviousData()
@@ -287,6 +316,9 @@ func (t *TelegramService) Run() error {
 
 	fmt.Println("Starting continuous monitoring loop (checking every 5 minutes)...")
 	fmt.Println("Press Ctrl+C to stop monitoring")
+
+	// Start message polling in a separate goroutine
+	go t.startMessagePolling()
 
 	// Start the monitoring loop
 	ticker := time.NewTicker(5 * time.Minute)
@@ -322,12 +354,52 @@ func (t *TelegramService) Run() error {
 func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) error {
 	fmt.Printf("\n[%s] Checking blockchain data for %d peer IDs...\n", time.Now().Format("2006-01-02 15:04:05"), len(t.PeerIDs))
 
+	// Convert chat_id to number for API calls
+	var chatIDNum int64
+	if _, err := fmt.Sscanf(t.Config.ChatID, "%d", &chatIDNum); err != nil {
+		return fmt.Errorf("failed to parse chat ID as number: %w", err)
+	}
+
+	// Check verification status first
+	fmt.Printf("Checking verification status for Telegram ID: %d\n", chatIDNum)
+	verificationStatus, err := t.CheckVerificationStatus(chatIDNum)
+	if err != nil {
+		fmt.Printf("Warning: Could not check verification status: %v\n", err)
+		// Continue without verification data
+		verificationStatus = nil
+	}
+
+	var userRankData *UserRankData
+	if verificationStatus != nil && verificationStatus.IsVerified {
+		fmt.Printf("User is verified!\n")
+
+		// Get rank data for verified user
+		fmt.Printf("Fetching rank data for verified user...\n")
+		userRankData, err = t.GetUserRankData(chatIDNum)
+		if err != nil {
+			fmt.Printf("Warning: Could not get user rank data: %v\n", err)
+			// Continue without rank data
+			userRankData = nil
+		} else {
+			fmt.Printf("Successfully fetched rank data:\n")
+			fmt.Printf("  - Total ranks: %d\n", len(userRankData.Ranks))
+			fmt.Printf("  - Stats: TotalNodes=%d, RankedNodes=%d\n", userRankData.Stats.TotalNodes, userRankData.Stats.RankedNodes)
+			for i, rank := range userRankData.Ranks {
+				fmt.Printf("  - Rank %d: PeerID=%s, Rank=%d, Wins=%d, Rewards=%d\n",
+					i+1, rank.PeerID, rank.Rank, rank.TotalWins, rank.TotalRewards)
+			}
+		}
+	} else {
+		fmt.Printf("User is not verified or verification check failed\n")
+	}
+
 	var totalVotes *big.Int = big.NewInt(0)
 	var totalRewards *big.Int = big.NewInt(0)
 	var peerData []struct {
 		PeerID  string
 		Votes   *big.Int
 		Rewards *big.Int
+		Rank    *Rank
 	}
 
 	// Check each peer ID with rate limiting (1 second delay between requests)
@@ -345,15 +417,35 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		totalVotes.Add(totalVotes, blockchainData.Votes)
 		totalRewards.Add(totalRewards, blockchainData.Rewards)
 
+		// Find rank data for this peer if available
+		var rankData *Rank
+		if userRankData != nil {
+			fmt.Printf("DEBUG: Looking for rank data for peer ID: %s\n", peerID)
+			fmt.Printf("DEBUG: Available ranks: %d\n", len(userRankData.Ranks))
+			for i, rank := range userRankData.Ranks {
+				fmt.Printf("DEBUG: Rank %d: PeerID=%s\n", i+1, rank.PeerID)
+				if rank.PeerID == peerID {
+					rankData = &rank
+					fmt.Printf("DEBUG: Found matching rank data for peer %s: Rank=%d\n", peerID, rank.Rank)
+					break
+				}
+			}
+			if rankData == nil {
+				fmt.Printf("DEBUG: No rank data found for peer %s\n", peerID)
+			}
+		}
+
 		// Store per-peer data
 		peerData = append(peerData, struct {
 			PeerID  string
 			Votes   *big.Int
 			Rewards *big.Int
+			Rank    *Rank
 		}{
 			PeerID:  peerID,
 			Votes:   blockchainData.Votes,
 			Rewards: blockchainData.Rewards,
+			Rank:    rankData,
 		})
 
 		// Rate limiting: 1 second delay between requests
@@ -382,13 +474,47 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 
 			peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
 			peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s\n", data.Votes.String()))
-			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s\n\n", data.Rewards.String()))
+			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %d\n",
+				func() int {
+					if data.Rank != nil {
+						return data.Rank.TotalRewards
+					}
+					// fallback to data.Rewards if no rank info
+					if data.Rewards != nil {
+						v, _ := new(big.Int).SetString(data.Rewards.String(), 10)
+						return int(v.Int64())
+					}
+					return 0
+				}(),
+			))
+
+			// Add rank information if available
+			if data.Rank != nil {
+				peerBreakdown.WriteString(fmt.Sprintf("   🏆 Rank: #%d\n", data.Rank.Rank))
+			}
+			peerBreakdown.WriteString("\n")
+		}
+
+		// Build verification status section
+		var verificationSection strings.Builder
+		if verificationStatus != nil && verificationStatus.IsVerified {
+			verificationSection.WriteString("✅ <b>Verified User</b>\n")
+
+			if userRankData != nil {
+				verificationSection.WriteString(fmt.Sprintf("📊 Total Nodes: %d\n", userRankData.Stats.TotalNodes))
+				verificationSection.WriteString(fmt.Sprintf("🏆 Ranked Nodes: %d\n", userRankData.Stats.RankedNodes))
+			}
+			verificationSection.WriteString("\n")
+		} else {
+			verificationSection.WriteString("❌ <b>Not Verified</b>\n")
+			verificationSection.WriteString("🔗 Get verified in Discord to see rank data!\n")
+			verificationSection.WriteString("💬 Use /verify command for verification code\n\n")
 		}
 
 		// Prepare notification message
 		message := fmt.Sprintf(`🚀 <b>G-Swarm Update</b>
 
-📊 <b>Blockchain Data Update</b>
+%s📊 <b>Blockchain Data Update</b>
 
 👤 <b>EOA Address:</b> <code>%s</code>
 🔍 <b>Peer IDs Monitored:</b> %d
@@ -397,8 +523,8 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 💰 <b>Total Rewards:</b> %s %s
 
 📋 <b>Per-Peer Breakdown:</b>
-%s
-⏰ <b>Last Check:</b> %s`,
+%s⏰ <b>Last Check:</b> %s`,
+			verificationSection.String(),
 			t.UserEOAAddress,
 			len(t.PeerIDs),
 			totalVotes.String(),
@@ -980,8 +1106,38 @@ func (t *TelegramService) loadPreviousData() (*PreviousData, error) {
 }
 
 // sendWelcomeMessage sends a welcome message to new users
-func (t *TelegramService) sendWelcomeMessage() error {
-	message := `🤖 <b>Welcome to G-Swarm Monitor!</b>
+func (t *TelegramService) sendWelcomeMessage(code string) error {
+	var message string
+
+	if code != "" {
+		// Full welcome message with verification instructions
+		message = fmt.Sprintf(`🤖 <b>Welcome to G-Swarm Monitor!</b>
+
+This bot monitors your Gensyn AI node activity and notifies you when your votes or rewards increase.
+
+<b>Features:</b>
+• Monitors votes and rewards every 5 minutes
+• Sends notifications only when there are changes
+• Tracks progress across multiple contracts
+
+<b>Get Verified in Discord:</b>
+1️⃣ Join the Gensyn AI Discord server: <a href="https://discord.gg/gensyn">https://discord.gg/gensyn</a>
+2️⃣ Use the verification command:
+<b>/verify %s</b>
+3️⃣ The bot will automatically assign you the @GSwarm role!
+
+⏰ <b>Code expires in 15 minutes</b>
+🔄 <b>Need a new code?</b> Run /verify again
+
+<b>Support Development:</b>
+If you find this bot useful, please consider donating to support ongoing development and new features:
+
+ETH: <code>0xA22e20BA3336f5Bd6eCE959F5ac4083C9693e316</code>
+
+Thank you for using G-Swarm Monitor! 🚀`, code)
+	} else {
+		// Welcome message without verification instructions
+		message = `🤖 <b>Welcome to G-Swarm Monitor!</b>
 
 This bot monitors your Gensyn AI node activity and notifies you when your votes or rewards increase.
 
@@ -996,6 +1152,7 @@ If you find this bot useful, please consider donating to support ongoing develop
 ETH: <code>0xA22e20BA3336f5Bd6eCE959F5ac4083C9693e316</code>
 
 Thank you for using G-Swarm Monitor! 🚀`
+	}
 
 	return t.sendTelegramMessageHTML(message)
 }
@@ -1017,8 +1174,8 @@ func promptForEOAAddress() (string, error) {
 	return address, nil
 }
 
-// getPeerIDs fetches the peer IDs associated with the given EOA address
-func (t *TelegramService) getPeerIDs(eoaAddress string) ([]string, error) {
+// GetPeerIDs fetches the peer IDs associated with the given EOA address
+func (t *TelegramService) GetPeerIDs(eoaAddress string) ([]string, error) {
 	// Use the correct function selector for getPeerId: 0xb894a469
 	// Function signature: getPeerId(eoas address[]) returns (string[][])
 	// We need to encode an array of addresses
@@ -1145,4 +1302,198 @@ func decodePeerIDs(rawHex string) ([]string, error) {
 		return nil, nil // no peer IDs
 	}
 	return raw2d[0], nil
+}
+
+// handleTelegramCommand handles incoming Telegram commands
+func (t *TelegramService) handleTelegramCommand(command string, telegramID string) error {
+	switch command {
+	case "/verify":
+		return t.handleVerificationCommand(telegramID)
+	case "/start":
+		return t.sendWelcomeMessage("")
+	case "/help":
+		return t.sendHelpMessage()
+	default:
+		return t.sendUnknownCommandMessage()
+	}
+}
+
+// sendHelpMessage sends help information to the user
+func (t *TelegramService) sendHelpMessage() error {
+	message := `🤖 <b>G-Swarm Bot Commands</b>
+
+<b>Available commands:</b>
+/verify - Get verified in the G-Swarm Discord server
+/start - Show welcome message
+/help - Show this help message
+
+<b>Monitoring:</b>
+This bot automatically monitors your Gensyn AI node activity and sends notifications when your votes or rewards change.
+
+<b>Support:</b>
+For issues or questions, contact the G-Swarm team in Discord.`
+
+	return t.sendTelegramMessageHTML(message)
+}
+
+// sendUnknownCommandMessage sends a message for unknown commands
+func (t *TelegramService) sendUnknownCommandMessage() error {
+	message := `❓ <b>Unknown Command</b>
+
+Use /help to see available commands.
+
+<b>Quick start:</b>
+/verify - Get verified in Discord
+/start - Welcome message`
+
+	return t.sendTelegramMessageHTML(message)
+}
+
+// sendWelcomeMessageWithInstructions sends a welcome message including the verification code instructions
+func (t *TelegramService) sendWelcomeMessageWithInstructions(code string) error {
+	message := fmt.Sprintf(`🤖 <b>Welcome to G-Swarm Monitor!</b>
+
+This bot monitors your Gensyn AI node activity and notifies you when your votes or rewards increase.
+
+<b>Features:</b>
+• Monitors votes and rewards every 5 minutes
+• Sends notifications only when there are changes
+• Tracks progress across multiple contracts
+
+<b>Get Verified in Discord:</b>
+1️⃣ Join the Discord server: <a href="https://discord.gg/gswarm">https://discord.gg/gswarm</a>
+2️⃣ Use the verification command:
+<b>/verify %s</b>
+3️⃣ The bot will automatically assign you the @GSwarm role!
+
+⏰ <b>Code expires in 15 minutes</b>
+🔄 <b>Need a new code?</b> Run /verify again
+
+<b>Support Development:</b>
+If you find this bot useful, please consider donating to support ongoing development and new features:
+
+ETH: <code>0xA22e20BA3336f5Bd6eCE959F5ac4083C9693e316</code>
+
+Thank you for using G-Swarm Monitor! 🚀`, code)
+
+	return t.sendTelegramMessageHTML(message)
+}
+
+// TelegramUpdate represents an incoming Telegram update
+type TelegramUpdate struct {
+	UpdateID int64 `json:"update_id"`
+	Message  struct {
+		MessageID int64 `json:"message_id"`
+		From      struct {
+			ID        int64  `json:"id"`
+			FirstName string `json:"first_name"`
+			LastName  string `json:"last_name"`
+			Username  string `json:"username"`
+		} `json:"from"`
+		Chat struct {
+			ID    int64  `json:"id"`
+			Type  string `json:"type"`
+			Title string `json:"title"`
+		} `json:"chat"`
+		Date     int64  `json:"date"`
+		Text     string `json:"text"`
+		Entities []struct {
+			Type   string `json:"type"`
+			Offset int    `json:"offset"`
+			Length int    `json:"length"`
+		} `json:"entities"`
+	} `json:"message"`
+}
+
+// TelegramUpdatesResponse represents the response from getUpdates
+type TelegramUpdatesResponse struct {
+	OK     bool             `json:"ok"`
+	Result []TelegramUpdate `json:"result"`
+}
+
+// startMessagePolling starts polling for incoming Telegram messages
+func (t *TelegramService) startMessagePolling() {
+	fmt.Println("Starting Telegram message polling...")
+
+	var lastUpdateID int64 = 0
+
+	// Poll for updates every 3 seconds
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			updates, err := t.getUpdates(lastUpdateID)
+			if err != nil {
+				fmt.Printf("Error getting updates: %v\n", err)
+				continue
+			}
+
+			for _, update := range updates {
+				if update.UpdateID > lastUpdateID {
+					lastUpdateID = update.UpdateID
+
+					// Handle the message
+					if update.Message.Text != "" {
+						t.handleIncomingMessage(update.Message.Text, fmt.Sprintf("%d", update.Message.From.ID))
+					}
+				}
+			}
+		case <-t.StopChan:
+			fmt.Println("Stopping Telegram polling...")
+			return
+		}
+	}
+}
+
+// getUpdates fetches updates from Telegram
+func (t *TelegramService) getUpdates(offset int64) ([]TelegramUpdate, error) {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates", t.Config.BotToken)
+
+	// Add offset parameter if provided
+	if offset > 0 {
+		apiURL += fmt.Sprintf("?offset=%d", offset+1)
+	}
+
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get updates: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var response TelegramUpdatesResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if !response.OK {
+		return nil, fmt.Errorf("Telegram API error: %s", string(body))
+	}
+
+	return response.Result, nil
+}
+
+// handleIncomingMessage handles incoming messages and routes them to appropriate handlers
+func (t *TelegramService) handleIncomingMessage(text string, telegramID string) {
+	// Check if it's a command
+	if strings.HasPrefix(text, "/") {
+		command := strings.Split(text, " ")[0]
+		fmt.Printf("Received command: %s from Telegram ID: %s\n", command, telegramID)
+
+		if err := t.handleTelegramCommand(command, telegramID); err != nil {
+			fmt.Printf("Error handling command %s: %v\n", command, err)
+			// Send error message to user
+			errorMsg := fmt.Sprintf("❌ Error processing command: %v", err)
+			t.sendTelegramMessageHTML(errorMsg)
+		}
+	} else {
+		// Handle regular messages
+		fmt.Printf("Received message: %s from Telegram ID: %s\n", text, telegramID)
+	}
 }

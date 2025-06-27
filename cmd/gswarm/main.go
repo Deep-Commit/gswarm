@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/Deep-Commit/gswarm/internal/telegram"
 	"github.com/urfave/cli/v2"
@@ -85,6 +87,12 @@ func getAppCommands() []*cli.Command {
 			Usage:   "Show detailed version information",
 			Action:  getVersionAction(),
 		},
+		{
+			Name:    "verify",
+			Aliases: []string{"ver"},
+			Usage:   "Generate verification code for Discord",
+			Action:  getVerifyAction(),
+		},
 	}
 }
 
@@ -161,4 +169,65 @@ func runTelegramService(c *cli.Context) error {
 
 	telegramService := telegram.NewTelegramService(telegramConfigPath, updateTelegramConfig)
 	return telegramService.Run()
+}
+
+func getVerifyAction() func(c *cli.Context) error {
+	return func(c *cli.Context) error {
+		telegramConfigPath := c.String("telegram-config-path")
+		updateTelegramConfig := c.Bool("update-telegram-config")
+
+		telegramService := telegram.NewTelegramService(telegramConfigPath, updateTelegramConfig)
+
+		// Ensure config is loaded
+		if err := telegramService.EnsureTelegramConfig(); err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		// Prompt for EOA address
+		fmt.Println("Please provide your EOA address...")
+		eoaAddress, err := promptForEOAAddress()
+		if err != nil {
+			return fmt.Errorf("failed to get EOA address: %w", err)
+		}
+		telegramService.UserEOAAddress = eoaAddress
+
+		// Fetch peer IDs
+		fmt.Printf("Fetching peer IDs for address: %s\n", eoaAddress)
+		peerIDs, err := telegramService.GetPeerIDs(eoaAddress)
+		if err != nil {
+			return fmt.Errorf("failed to fetch peer IDs: %w", err)
+		}
+		telegramService.PeerIDs = peerIDs
+
+		// Generate verification code
+		fmt.Println("Generating verification code...")
+		verificationCode, err := telegramService.IssueVerificationCode("cli-user")
+		if err != nil {
+			return fmt.Errorf("failed to generate verification code: %w", err)
+		}
+
+		fmt.Printf("\n✅ Verification code generated: %s\n", verificationCode.Code)
+		fmt.Printf("📋 Use this code in Discord: /verify %s\n", verificationCode.Code)
+		fmt.Printf("⏰ Code expires in 15 minutes\n")
+		fmt.Printf("🔄 Need a new code? Run: gswarm verify\n")
+
+		return nil
+	}
+}
+
+// promptForEOAAddress prompts the user for their EOA address
+func promptForEOAAddress() (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Enter your EOA address (from Gensyn dashboard): ")
+	address, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	address = strings.TrimSpace(address)
+
+	if address == "" {
+		return "", fmt.Errorf("address cannot be empty")
+	}
+
+	return address, nil
 }
