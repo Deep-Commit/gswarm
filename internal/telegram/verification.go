@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -433,8 +435,10 @@ func (t *TelegramService) CheckVerificationStatus(telegramID int64) (*Verificati
 
 // GetUserRankData gets rank data for verified users' peer IDs
 func (t *TelegramService) GetUserRankData(telegramID int64) (*UserRankData, error) {
-	// Create HTTP request
-	url := fmt.Sprintf("%s/user/data?telegramId=%d", t.Config.APIURL, telegramID)
+	// Build peerIds query parameter as comma-separated string
+	peerIdsParam := strings.Join(t.PeerIDs, ",")
+	// Create HTTP request with peerIds in query
+	url := fmt.Sprintf("%s/user/data?telegramId=%d&peerIds=%s", t.Config.APIURL, telegramID, url.QueryEscape(peerIdsParam))
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)

@@ -1518,6 +1518,7 @@ func (t *TelegramService) verifyLinkingCode(code string, telegramID string) erro
 	request := map[string]string{
 		"code":       code,
 		"telegramId": telegramID,
+		"eoa":        t.UserEOAAddress,
 	}
 
 	// Convert to JSON
