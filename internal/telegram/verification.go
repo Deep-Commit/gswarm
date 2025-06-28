@@ -344,27 +344,6 @@ func (t *TelegramService) IssueVerificationCode(telegramID string) (*Verificatio
 	return verificationCode, nil
 }
 
-// sendVerificationInstructions sends verification instructions to the user
-func (t *TelegramService) sendVerificationInstructions(code string) error {
-	message := fmt.Sprintf(`🔐 <b>Discord Verification</b>
-
-To get verified in the G-Swarm Discord server:
-
-1️⃣ Join the Discord server: <a href="https://discord.gg/gswarm">https://discord.gg/gswarm</a>
-
-2️⃣ Use the verification command:
-<code>/verify %s</code>
-
-3️⃣ The bot will automatically assign you the @GSwarm role!
-
-⏰ <b>Code expires in 15 minutes</b>
-🔄 <b>Need a new code?</b> Run /verify again
-
-<b>Support:</b> If you have issues, contact the G-Swarm team in Discord.`, code)
-
-	return t.sendTelegramMessageHTML(message)
-}
-
 // handleVerificationCommand handles the /verify command from Telegram
 func (t *TelegramService) handleVerificationCommand(telegramID string) error {
 	fmt.Printf("Handling verification request for Telegram ID: %s\n", telegramID)

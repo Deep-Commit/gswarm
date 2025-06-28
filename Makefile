@@ -11,6 +11,7 @@ LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildDate=$(BUILD_DATE) 
 # Binary names
 TELEGRAM_BINARY := gswarm
 DISCORD_BINARY := discordd
+SERVER_BINARY := gswarm-server
 
 # Build directory
 BUILD_DIR := build
@@ -18,7 +19,7 @@ BUILD_DIR := build
 # Go files
 GO_FILES := $(shell find . -name "*.go" -type f)
 
-.PHONY: all build build-telegram build-discord clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help
+.PHONY: all build build-telegram build-discord build-server clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help
 
 # Default target
 all: build
@@ -71,6 +72,7 @@ install: build
 	@echo "Installing GSwarm..."
 	@rm -f $(shell go env GOPATH)/bin/$(TELEGRAM_BINARY)
 	@rm -f $(shell go env GOPATH)/bin/$(DISCORD_BINARY)
+	@rm -f $(shell go env GOPATH)/bin/$(SERVER_BINARY)
 	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(TELEGRAM_BINARY) $(shell go env GOPATH)/bin/$(TELEGRAM_BINARY)
 	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(DISCORD_BINARY) $(shell go env GOPATH)/bin/$(DISCORD_BINARY)
 	@echo "Installation complete!"
@@ -153,14 +155,44 @@ version:
 	@echo "Build date: $(BUILD_DATE)"
 	@echo "Git commit: $(GIT_COMMIT)"
 
+# Run the Discord bot (connects to external API)
+run-discord:
+	@echo "Starting GSwarm Discord Bot (external API)..."
+	@echo "Make sure to set these environment variables:"
+	@echo "  DISCORD_BOT_TOKEN=your_discord_bot_token"
+	@echo "  GSWARM_API_SECRET=your_api_secret"
+	@echo "  DISCORD_GUILD_ID=your_guild_id"
+	@echo ""
+	@if [ -z "$$DISCORD_BOT_TOKEN" ]; then \
+		echo "❌ DISCORD_BOT_TOKEN not set"; \
+		exit 1; \
+	fi
+	@if [ -z "$$GSWARM_API_SECRET" ]; then \
+		echo "❌ GSWARM_API_SECRET not set"; \
+		exit 1; \
+	fi
+	@if [ -z "$$DISCORD_GUILD_ID" ]; then \
+		echo "❌ DISCORD_GUILD_ID not set"; \
+		exit 1; \
+	fi
+	@echo "✅ All environment variables set, starting Discord bot..."
+	@./build/discordd
+
+# Test the account linking system
+test-account-linking:
+	@echo "Testing account linking system..."
+	@./scripts/test-account-linking.sh
+
 # Show help
 help:
-	@echo "GSwarm Makefile - Telegram Monitoring Service"
+	@echo "GSwarm Makefile - Telegram Monitoring Service & Account Linking"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  build        - Build the Telegram monitoring service"
+	@echo "  build        - Build Discord and Telegram bots"
+	@echo "  build-telegram - Build the Telegram monitoring service"
+	@echo "  build-discord - Build the Discord bot"
 	@echo "  build-all    - Build for all platforms (Linux, macOS, Windows)"
-	@echo "  install      - Install the application"
+	@echo "  install      - Install Discord and Telegram bots"
 	@echo "  clean        - Clean build artifacts"
 	@echo "  test         - Run all tests with coverage"
 	@echo "  test-unit    - Run unit tests only"
@@ -168,25 +200,33 @@ help:
 	@echo "  test-coverage - Run tests with coverage report"
 	@echo "  test-bench   - Run benchmarks"
 	@echo "  test-short   - Run tests in short mode (skip integration)"
+	@echo "  test-account-linking - Test the account linking system"
 	@echo "  fmt          - Format code"
 	@echo "  lint         - Run comprehensive linting (vet + staticcheck + golangci-lint)"
 	@echo "  lint-vet     - Run go vet (basic Go toolchain checks)"
 	@echo "  lint-staticcheck - Run Staticcheck (advanced static analysis)"
 	@echo "  lint-full    - Run full linting suite with extended timeout"
+	@echo "  run-discord  - Run the Discord bot (connects to external API)"
 	@echo "  version      - Show version information"
 	@echo "  help         - Show this help message"
 	@echo ""
-	@echo "Linting Strategy:"
-	@echo "  - go vet: Basic Go toolchain checks (built-in)"
-	@echo "  - Staticcheck: Advanced static analysis with 150+ checks"
-	@echo "  - golangci-lint: Comprehensive linting with multiple linters"
-	@echo "  - Recommended workflow: make lint-vet && make lint-staticcheck"
+	@echo "Account Linking System:"
+	@echo "  - Secure cross-platform Discord-Telegram account linking"
+	@echo "  - External API integration (https://gswarm.dev/api)"
+	@echo "  - API key protected code issuance (Discord bot only)"
+	@echo "  - Public code verification endpoint (Telegram bot)"
+	@echo "  - Single-use, time-limited linking codes"
+	@echo "  - Automatic duplicate prevention"
 	@echo ""
-	@echo "Testing Strategy:"
-	@echo "  - Unit tests: Fast, isolated tests for individual functions"
-	@echo "  - Integration tests: End-to-end tests with mocked dependencies"
-	@echo "  - Coverage: Enforced minimum coverage with HTML reports"
-	@echo "  - Race detection: All tests run with -race flag"
+	@echo "Discord Bot Commands:"
+	@echo "  /link-telegram     - Generate code to link Discord-Telegram accounts"
+	@echo ""
+	@echo "Quick Start (Discord Bot):"
+	@echo "  1. Set environment variables:"
+	@echo "     export DISCORD_BOT_TOKEN=your_token"
+	@echo "     export GSWARM_API_SECRET=your_secret"
+	@echo "     export DISCORD_GUILD_ID=your_guild_id"
+	@echo "  2. Run: make run-discord"
 	@echo ""
 	@echo "Telegram Monitoring Service:"
 	@echo "  - Real-time blockchain monitoring for Gensyn AI"

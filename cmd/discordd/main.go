@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Deep-Commit/gswarm/internal/discord"
@@ -19,16 +20,55 @@ var (
 )
 
 func main() {
+	// Load .env file if it exists
+	if err := loadEnvFile(); err != nil {
+		log.Printf("Warning: Failed to load .env file: %v", err)
+	}
+
 	app := createCLIApp()
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
 }
 
+// loadEnvFile loads environment variables from .env file
+func loadEnvFile() error {
+	envFile := ".env"
+	if _, err := os.Stat(envFile); os.IsNotExist(err) {
+		return fmt.Errorf(".env file not found")
+	}
+
+	content, err := os.ReadFile(envFile)
+	if err != nil {
+		return fmt.Errorf("failed to read .env file: %v", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			// Remove quotes if present
+			if len(value) >= 2 && (value[0] == '"' && value[len(value)-1] == '"') {
+				value = value[1 : len(value)-1]
+			}
+			os.Setenv(key, value)
+		}
+	}
+
+	return nil
+}
+
 func createCLIApp() *cli.App {
 	app := &cli.App{
 		Name:        "discordd",
-		Usage:       "G-Swarm Discord Verification Bot",
+		Usage:       "G-Swarm Discord Account Linking Bot",
 		Description: getAppDescription(),
 		Version:     Version,
 		Before:      getBeforeFunc(),
@@ -40,17 +80,20 @@ func createCLIApp() *cli.App {
 }
 
 func getAppDescription() string {
-	return `G-Swarm Discord Verification Bot
+	return `G-Swarm Discord Account Linking Bot
 
-A Discord bot that handles verification for G-Swarm node operators.
-This bot grants the @GSwarm role to operators who prove ownership
-of their node through a one-time verification code.
+A Discord bot that handles account linking for G-Swarm users.
+This bot generates linking codes to connect Discord and Telegram accounts.
 
 Features:
-• /verify command for code-based verification
-• Automatic role assignment
+• /link-telegram command for account linking
 • Integration with G-Swarm API
-• Secure verification flow
+• Secure code-based linking system
+
+Account Linking:
+• Users can link their Discord and Telegram accounts
+• Secure code-based verification system
+• Integration with external API endpoints
 
 This is a community project and is not affiliated with the official Gensyn team.`
 }
@@ -65,13 +108,13 @@ func getAppFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:    "api-url",
-			Usage:   "G-Swarm API URL",
+			Usage:   "External API URL for account linking (default: https://gswarm.dev/api)",
 			Value:   "https://gswarm.dev/api",
 			EnvVars: []string{"GSWARM_API_URL"},
 		},
 		&cli.StringFlag{
 			Name:     "api-secret",
-			Usage:    "G-Swarm API secret key",
+			Usage:    "API secret key for authentication",
 			Required: false,
 			EnvVars:  []string{"GSWARM_API_SECRET"},
 		},
@@ -80,12 +123,6 @@ func getAppFlags() []cli.Flag {
 			Usage:    "Discord guild (server) ID",
 			Required: false,
 			EnvVars:  []string{"DISCORD_GUILD_ID"},
-		},
-		&cli.StringFlag{
-			Name:     "role-id",
-			Usage:    "Discord role ID for @GSwarm",
-			Required: false,
-			EnvVars:  []string{"DISCORD_ROLE_ID"},
 		},
 	}
 }
@@ -102,9 +139,6 @@ func getMainAction() func(c *cli.Context) error {
 			}
 			if c.String("guild-id") == "" {
 				return fmt.Errorf("guild-id is required")
-			}
-			if c.String("role-id") == "" {
-				return fmt.Errorf("role-id is required")
 			}
 			return runDiscordBot(c)
 		}
@@ -167,7 +201,7 @@ VERSION:
    {{end}}
 EXAMPLES:
    # Start Discord bot with environment variables
-   discordd --discord-token YOUR_TOKEN --api-secret YOUR_SECRET --guild-id YOUR_GUILD --role-id YOUR_ROLE
+   discordd --discord-token YOUR_TOKEN --api-secret YOUR_SECRET --guild-id YOUR_GUILD
 
    # Show version
    discordd version
@@ -178,7 +212,6 @@ ENVIRONMENT VARIABLES:
    - GSWARM_API_URL: G-Swarm API URL (default: https://gswarm.dev/api)
    - GSWARM_API_SECRET: G-Swarm API secret key
    - DISCORD_GUILD_ID: Discord guild (server) ID
-   - DISCORD_ROLE_ID: Discord role ID for @GSwarm
 
 LEARN MORE:
    • GitHub: https://github.com/Deep-Commit/gswarm
@@ -192,7 +225,6 @@ func runDiscordBot(c *cli.Context) error {
 		APIURL:       c.String("api-url"),
 		APISecret:    c.String("api-secret"),
 		GuildID:      c.String("guild-id"),
-		RoleID:       c.String("role-id"),
 	}
 
 	bot, err := discord.NewBot(config)

@@ -415,3 +415,27 @@ For detailed information about upcoming features and development plans, see our 
 - **API Integration**: REST API for external integrations
 - **Advanced Analytics**: Detailed performance metrics and insights
 - **Multi-Platform Support**: Support for additional messaging platforms
+
+## Account Linking and Verification
+
+To securely link your Discord and Telegram accounts for G-Swarm:
+
+### 1. Join the Gensyn Discord
+- [https://discord.gg/gensyn](https://discord.gg/gensyn)
+
+### 2. Get a Linking Code in Discord
+- In the Gensyn Discord, use the command: `/link-telegram`
+- The bot will send you a unique linking code via DM
+
+### 3. Verify in Telegram
+- In the G-Swarm Telegram bot, use the command: `/verify <code>`
+  - Replace `<code>` with the code you received from Discord
+- Example: `/verify ABC123`
+
+### 4. Success
+- If the code is valid, your Discord and Telegram accounts will be linked
+- You will receive a confirmation message in Telegram
+
+**Notes:**
+- Each code can only be used once and expires after 10 minutes
+- If you have issues, check the debug output or contact the G-Swarm team in Discord

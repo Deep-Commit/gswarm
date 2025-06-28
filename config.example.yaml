@@ -1,0 +1,56 @@
+# G-Swarm Account Linking Configuration Example
+# Copy this file to config.yaml and update with your values
+
+# API Configuration
+api:
+  # Secure API key for protected endpoints (generate a strong random key)
+  key: "your_secure_api_key_here"
+  # API server address
+  addr: ":8080"
+  # API URL for bots to connect to
+  url: "http://localhost:8080"
+
+# Discord Bot Configuration
+discord:
+  # Bot token from Discord Developer Portal
+  token: "your_discord_bot_token_here"
+  # Guild (server) ID where the bot operates
+  guild_id: "your_discord_guild_id_here"
+  # Role ID to assign to verified users (optional)
+  role_id: "your_discord_role_id_here"
+
+# Telegram Bot Configuration
+telegram:
+  # Bot token from BotFather
+  token: "your_telegram_bot_token_here"
+  # Chat ID for notifications (optional)
+  chat_id: "your_telegram_chat_id_here"
+
+# Security Settings
+security:
+  # Code expiration time (default: 10 minutes)
+  code_expiry: "10m"
+  # Maximum codes per Discord user (default: 5)
+  max_codes_per_user: 5
+  # Rate limiting for code issuance (requests per minute)
+  rate_limit_issue: 10
+  # Rate limiting for code verification (requests per minute)
+  rate_limit_verify: 20
+
+# Logging Configuration
+logging:
+  # Log level (debug, info, warn, error)
+  level: "info"
+  # Log format (json, text)
+  format: "text"
+  # Include timestamps in logs
+  timestamps: true
+
+# Database Configuration (for future use)
+database:
+  # Database type (memory, postgres, redis)
+  type: "memory"
+  # Connection string (for persistent databases)
+  url: ""
+  # Database name
+  name: "gswarm_linking" 

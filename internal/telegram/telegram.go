@@ -270,36 +270,26 @@ func (t *TelegramService) Run() error {
 
 	fmt.Printf("Successfully loaded %d peer IDs for monitoring\n", len(peerIDs))
 
-	// Now generate verification code and send welcome message if needed
+	// Send welcome message if not already sent
 	if !t.Config.WelcomeSent {
-		fmt.Println("Generating verification code and sending welcome message...")
-		verificationCode, err := t.IssueVerificationCode(t.Config.ChatID)
-		if err != nil {
-			fmt.Printf("Warning: Could not generate verification code: %v\n", err)
-			// Fallback to regular welcome message without verification code
-			if err := t.sendWelcomeMessage(""); err != nil {
-				fmt.Printf("Warning: Could not send welcome message: %v\n", err)
-			}
+		fmt.Println("Sending welcome message...")
+		if err := t.sendWelcomeMessage(""); err != nil {
+			fmt.Printf("Warning: Could not send welcome message: %v\n", err)
 		} else {
-			// Send welcome message with verification instructions
-			if err := t.sendWelcomeMessage(verificationCode.Code); err != nil {
-				fmt.Printf("Warning: Could not send welcome message: %v\n", err)
+			// Mark welcome message as sent and save config
+			t.Config.WelcomeSent = true
+
+			// Determine the config path to save to
+			configPath := t.ConfigPath
+			if configPath == "" {
+				configPath = DefaultConfigPath
+			}
+
+			fmt.Printf("Saving updated config to: %s\n", configPath)
+			if err := saveTelegramConfig(configPath, t.Config); err != nil {
+				fmt.Printf("Warning: Could not save updated config: %v\n", err)
 			} else {
-				// Mark welcome message as sent and save config
-				t.Config.WelcomeSent = true
-
-				// Determine the config path to save to
-				configPath := t.ConfigPath
-				if configPath == "" {
-					configPath = DefaultConfigPath
-				}
-
-				fmt.Printf("Saving updated config to: %s\n", configPath)
-				if err := saveTelegramConfig(configPath, t.Config); err != nil {
-					fmt.Printf("Warning: Could not save updated config: %v\n", err)
-				} else {
-					fmt.Println("Welcome message with verification instructions sent and config updated!")
-				}
+				fmt.Println("Welcome message sent and config updated!")
 			}
 		}
 	}
@@ -508,7 +498,7 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		} else {
 			verificationSection.WriteString("❌ <b>Not Verified</b>\n")
 			verificationSection.WriteString("🔗 Get verified in Discord to see rank data!\n")
-			verificationSection.WriteString("💬 Use /verify command for verification code\n\n")
+			verificationSection.WriteString("💬 Use <code>/link-telegram</code> in the gensyn discord channel\n\n")
 		}
 
 		// Prepare notification message
@@ -1110,7 +1100,7 @@ func (t *TelegramService) sendWelcomeMessage(code string) error {
 	var message string
 
 	if code != "" {
-		// Full welcome message with verification instructions
+		// Welcome message with verification instructions (for backward compatibility)
 		message = fmt.Sprintf(`🤖 <b>Welcome to G-Swarm Monitor!</b>
 
 This bot monitors your Gensyn AI node activity and notifies you when your votes or rewards increase.
@@ -1120,14 +1110,14 @@ This bot monitors your Gensyn AI node activity and notifies you when your votes 
 • Sends notifications only when there are changes
 • Tracks progress across multiple contracts
 
-<b>Get Verified in Discord:</b>
-1️⃣ Join the Gensyn AI Discord server: <a href="https://discord.gg/gensyn">https://discord.gg/gensyn</a>
-2️⃣ Use the verification command:
-<b>/verify %s</b>
-3️⃣ The bot will automatically assign you the @GSwarm role!
+<b>Account Linking:</b>
+🔗 Join the Gensyn Discord: <a href="https://discord.gg/gensyn">https://discord.gg/gensyn</a>
+To link your Discord and Telegram accounts:
+1️⃣ Use <code>/link-telegram</code> in Discord to get a code
+2️⃣ Use <code>/verify %s</code> here in Telegram
+3️⃣ Your accounts will be linked automatically!
 
-⏰ <b>Code expires in 15 minutes</b>
-🔄 <b>Need a new code?</b> Run /verify again
+⏰ <b>Code expires in 10 minutes</b>
 
 <b>Support Development:</b>
 If you find this bot useful, please consider donating to support ongoing development and new features:
@@ -1136,7 +1126,7 @@ ETH: <code>0xA22e20BA3336f5Bd6eCE959F5ac4083C9693e316</code>
 
 Thank you for using G-Swarm Monitor! 🚀`, code)
 	} else {
-		// Welcome message without verification instructions
+		// Welcome message without verification code
 		message = `🤖 <b>Welcome to G-Swarm Monitor!</b>
 
 This bot monitors your Gensyn AI node activity and notifies you when your votes or rewards increase.
@@ -1145,6 +1135,13 @@ This bot monitors your Gensyn AI node activity and notifies you when your votes 
 • Monitors votes and rewards every 5 minutes
 • Sends notifications only when there are changes
 • Tracks progress across multiple contracts
+
+<b>Account Linking:</b>
+🔗 Join the Gensyn Discord: <a href="https://discord.gg/gensyn">https://discord.gg/gensyn</a>
+To link your Discord and Telegram accounts:
+1️⃣ Use <code>/link-telegram</code> in Discord to get a code
+2️⃣ Use <code>/verify &lt;code&gt;</code> here in Telegram
+3️⃣ Your accounts will be linked automatically!
 
 <b>Support Development:</b>
 If you find this bot useful, please consider donating to support ongoing development and new features:
@@ -1305,14 +1302,15 @@ func decodePeerIDs(rawHex string) ([]string, error) {
 }
 
 // handleTelegramCommand handles incoming Telegram commands
-func (t *TelegramService) handleTelegramCommand(command string, telegramID string) error {
+func (t *TelegramService) handleTelegramCommand(command string, args string, telegramID string) error {
 	switch command {
 	case "/verify":
-		return t.handleVerificationCommand(telegramID)
-	case "/start":
-		return t.sendWelcomeMessage("")
+		return t.handleVerifyCommand(args, telegramID)
 	case "/help":
 		return t.sendHelpMessage()
+	case "/start":
+		// Explicitly ignore /start (no response)
+		return nil
 	default:
 		return t.sendUnknownCommandMessage()
 	}
@@ -1323,9 +1321,8 @@ func (t *TelegramService) sendHelpMessage() error {
 	message := `🤖 <b>G-Swarm Bot Commands</b>
 
 <b>Available commands:</b>
-/verify - Get verified in the G-Swarm Discord server
-/start - Show welcome message
-/help - Show this help message
+<code>/verify &lt;code&gt;</code> - Link your Discord and Telegram accounts
+<code>/help</code> - Show this help message
 
 <b>Monitoring:</b>
 This bot automatically monitors your Gensyn AI node activity and sends notifications when your votes or rewards change.
@@ -1340,11 +1337,11 @@ For issues or questions, contact the G-Swarm team in Discord.`
 func (t *TelegramService) sendUnknownCommandMessage() error {
 	message := `❓ <b>Unknown Command</b>
 
-Use /help to see available commands.
+Use <code>/help</code> to see available commands.
 
 <b>Quick start:</b>
-/verify - Get verified in Discord
-/start - Welcome message`
+<code>/link-telegram</code> in Discord to get a code
+<code>/verify &lt;code&gt;</code> here in Telegram to link accounts`
 
 	return t.sendTelegramMessageHTML(message)
 }
@@ -1483,10 +1480,16 @@ func (t *TelegramService) getUpdates(offset int64) ([]TelegramUpdate, error) {
 func (t *TelegramService) handleIncomingMessage(text string, telegramID string) {
 	// Check if it's a command
 	if strings.HasPrefix(text, "/") {
-		command := strings.Split(text, " ")[0]
-		fmt.Printf("Received command: %s from Telegram ID: %s\n", command, telegramID)
+		parts := strings.SplitN(text, " ", 2)
+		command := parts[0]
+		var args string
+		if len(parts) > 1 {
+			args = strings.TrimSpace(parts[1])
+		}
 
-		if err := t.handleTelegramCommand(command, telegramID); err != nil {
+		fmt.Printf("Received command: %s with args: '%s' from Telegram ID: %s\n", command, args, telegramID)
+
+		if err := t.handleTelegramCommand(command, args, telegramID); err != nil {
 			fmt.Printf("Error handling command %s: %v\n", command, err)
 			// Send error message to user
 			errorMsg := fmt.Sprintf("❌ Error processing command: %v", err)
@@ -1496,4 +1499,108 @@ func (t *TelegramService) handleIncomingMessage(text string, telegramID string) 
 		// Handle regular messages
 		fmt.Printf("Received message: %s from Telegram ID: %s\n", text, telegramID)
 	}
+}
+
+// handleVerifyCommand handles the /verify command with optional code parameter
+func (t *TelegramService) handleVerifyCommand(args string, telegramID string) error {
+	if args == "" {
+		// No code provided, send instructions
+		return t.sendVerificationInstructions("")
+	}
+
+	// Code provided, verify it
+	return t.verifyLinkingCode(args, telegramID)
+}
+
+// verifyLinkingCode verifies a linking code with the API
+func (t *TelegramService) verifyLinkingCode(code string, telegramID string) error {
+	// Create the request payload
+	request := map[string]string{
+		"code":       code,
+		"telegramId": telegramID,
+	}
+
+	// Convert to JSON
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Robust API URL construction: ensure only one /api in the final URL
+	apiBase := strings.TrimSuffix(t.Config.APIURL, "/")
+	apiBase = strings.TrimSuffix(apiBase, "/api")
+	url := apiBase + "/api/telegrams/verify-code"
+	fmt.Printf("DEBUG: Using API URL: %s\n", url)
+	fmt.Printf("DEBUG: Sending payload: %s\n", string(jsonData))
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+
+	// Make the request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// DEBUG: Print raw API response
+	fmt.Printf("DEBUG: Raw API response: %s\n", string(body))
+
+	// Parse response
+	var apiResp struct {
+		Success bool   `json:"success"`
+		Message string `json:"message,omitempty"`
+		Error   string `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	if !apiResp.Success {
+		// Send error message to user
+		errorMsg := fmt.Sprintf("❌ **Verification Failed**\n\n%s", apiResp.Error)
+		return t.sendTelegramMessageHTML(errorMsg)
+	}
+
+	// Send success message
+	successMsg := fmt.Sprintf("✅ **Account Successfully Linked!**\n\n%s\n\n🎉 You can now use both Discord and Telegram to interact with G-Swarm!", apiResp.Message)
+	return t.sendTelegramMessageHTML(successMsg)
+}
+
+// sendVerificationInstructions sends instructions for verification
+func (t *TelegramService) sendVerificationInstructions(code string) error {
+	message := `🔗 **Discord-Telegram Account Linking**
+
+To link your Discord and Telegram accounts:
+
+1️⃣ **Get a linking code from Discord:**
+   • Join the Discord server: https://discord.gg/gswarm
+   • Use the /link-telegram command
+   • You'll receive a code via DM
+
+2️⃣ **Verify the code here:**
+   • Use /verify <code> with your code
+   • Example: /verify a1b2c3
+
+3️⃣ **That's it!** Your accounts will be linked automatically.
+
+⚠️ **Important:**
+• Codes expire in 10 minutes
+• Each code can only be used once
+• Keep your code private`
+
+	return t.sendTelegramMessageHTML(message)
 }

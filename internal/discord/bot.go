@@ -19,7 +19,6 @@ type Config struct {
 	APIURL       string
 	APISecret    string
 	GuildID      string
-	RoleID       string
 }
 
 // Bot represents the Discord bot instance
@@ -100,8 +99,8 @@ func (b *Bot) handleInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	}
 
 	switch i.ApplicationCommandData().Name {
-	case "verify":
-		b.handleVerifyCommand(s, i)
+	case "link-telegram":
+		b.handleLinkTelegramCommand(s, i)
 	default:
 		b.handleUnknownCommand(s, i)
 	}
@@ -111,16 +110,8 @@ func (b *Bot) handleInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 func (b *Bot) registerCommands() error {
 	commands := []*discordgo.ApplicationCommand{
 		{
-			Name:        "verify",
-			Description: "Verify your G-Swarm node operator status",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "code",
-					Description: "Your verification code from the Telegram bot",
-					Required:    true,
-				},
-			},
+			Name:        "link-telegram",
+			Description: "Generate a code to link your Discord account with Telegram",
 		},
 	}
 
@@ -136,38 +127,9 @@ func (b *Bot) registerCommands() error {
 	return nil
 }
 
-// handleVerifyCommand handles the /verify command
-func (b *Bot) handleVerifyCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	// Get the verification code from the interaction
-	options := i.ApplicationCommandData().Options
-	if len(options) == 0 {
-		b.respondToInteraction(s, i, "❌ No verification code provided. Please provide your verification code.", true)
-		return
-	}
-
-	code := options[0].StringValue()
-	discordID := i.Member.User.ID
-
-	// Call the verification API
-	if err := b.verifyCode(code, discordID); err != nil {
-		log.Printf("Verification failed for user %s: %v", discordID, err)
-		b.respondToInteraction(s, i, "❌ Verification failed. Please check your code and try again.", true)
-		return
-	}
-
-	// Assign the role
-	if err := b.assignRole(discordID); err != nil {
-		log.Printf("Failed to assign role to user %s: %v", discordID, err)
-		b.respondToInteraction(s, i, "⚠️ Verification successful but failed to assign role. Please contact an administrator.", true)
-		return
-	}
-
-	b.respondToInteraction(s, i, "✅ You have been successfully verified! Welcome to the G-Swarm community!", false)
-}
-
 // handleUnknownCommand handles unknown commands
 func (b *Bot) handleUnknownCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	b.respondToInteraction(s, i, "❓ Unknown command. Use `/verify <code>` to verify your status.", true)
+	b.respondToInteraction(s, i, "❓ Unknown command. Use `/link-telegram` to link your Discord and Telegram accounts.", true)
 }
 
 // respondToInteraction responds to a Discord interaction
@@ -188,172 +150,112 @@ func (b *Bot) respondToInteraction(s *discordgo.Session, i *discordgo.Interactio
 	}
 }
 
-// DiscordLinkRequest represents the request to link Discord with verification code
-type DiscordLinkRequest struct {
-	DiscordID string `json:"discordId"`
-	Code      string `json:"code"`
+// handleLinkTelegramCommand handles the /link-telegram command
+func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	discordID := i.Member.User.ID
+
+	// Issue a linking code via the API
+	code, err := b.issueLinkingCode(discordID)
+	if err != nil {
+		log.Printf("Failed to issue linking code for user %s: %v", discordID, err)
+		b.respondToInteraction(s, i, "❌ Failed to generate linking code. Please try again later.", true)
+		return
+	}
+
+	// Send the code to the user via DM
+	message := fmt.Sprintf("🔗 **Discord-Telegram Account Linking**\n\n"+
+		"Here's your linking code: **`%s`**\n\n"+
+		"**Instructions:**\n"+
+		"1. Open your Telegram bot\n"+
+		"2. Send `/verify %s`\n"+
+		"3. Your accounts will be linked automatically\n\n"+
+		"⚠️ **Important:**\n"+
+		"• This code expires in 10 minutes\n"+
+		"• Keep it private and don't share it\n"+
+		"• Each code can only be used once", code, code)
+
+	// Try to send DM first
+	channel, err := s.UserChannelCreate(discordID)
+	if err != nil {
+		// If DM fails, respond in the channel
+		b.respondToInteraction(s, i, "❌ Unable to send you a DM. Please check your privacy settings and try again.", true)
+		return
+	}
+
+	_, err = s.ChannelMessageSend(channel.ID, message)
+	if err != nil {
+		// If DM fails, respond in the channel
+		b.respondToInteraction(s, i, "❌ Unable to send you a DM. Please check your privacy settings and try again.", true)
+		return
+	}
+
+	// Confirm in the channel that the code was sent
+	b.respondToInteraction(s, i, "✅ Linking code sent to your DMs! Check your private messages.", true)
 }
 
-// DiscordLinkResponse represents the response from the Discord link API
-type DiscordLinkResponse struct {
-	RoleID string `json:"roleId,omitempty"`
-	Error  string `json:"error,omitempty"`
-}
-
-// verifyCode calls the verification API
-func (b *Bot) verifyCode(code, discordID string) error {
+// issueLinkingCode calls the API to issue a linking code
+func (b *Bot) issueLinkingCode(discordID string) (string, error) {
 	// Create the request payload
-	request := DiscordLinkRequest{
-		DiscordID: discordID,
-		Code:      code,
+	request := map[string]interface{}{
+		"discordId": discordID,
+		// telegramId is optional and can be omitted
 	}
 
 	// Convert to JSON
 	jsonData, err := json.Marshal(request)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	// Create HTTP request
-	url := fmt.Sprintf("%s/discord/link", b.config.APIURL)
+	url := fmt.Sprintf("%s/telegrams/issue-code", b.config.APIURL)
+	log.Printf("Making API request to: %s", url)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create HTTP request: %w", err)
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-SECRET", b.config.APISecret)
+	req.Header.Set("x-api-key", b.config.APISecret)
 
 	// Make the request
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to make HTTP request: %w", err)
+		return "", fmt.Errorf("failed to make HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
+		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
-
-	// Log the raw response for debugging
-	log.Printf("API Response (status %d): %s", resp.StatusCode, string(body))
 
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse response
-	var apiResp DiscordLinkResponse
+	var apiResp struct {
+		Success bool   `json:"success"`
+		Code    string `json:"code,omitempty"`
+		Error   string `json:"error,omitempty"`
+	}
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return fmt.Errorf("failed to parse API response: %w", err)
+		return "", fmt.Errorf("failed to parse API response: %w", err)
 	}
 
-	if apiResp.Error != "" {
-		return fmt.Errorf("API returned error: %s", apiResp.Error)
+	if !apiResp.Success {
+		return "", fmt.Errorf("API returned error: %s", apiResp.Error)
 	}
 
-	// Success if we got a roleId
-	if apiResp.RoleID == "" {
-		return fmt.Errorf("API returned success but no roleId")
+	if apiResp.Code == "" {
+		return "", fmt.Errorf("API returned success but no code")
 	}
 
-	log.Printf("Successfully verified code %s for Discord user %s (roleId: %s)", code, discordID, apiResp.RoleID)
-	return nil
-}
-
-// assignRole assigns the G-Swarm verified role to a user
-func (b *Bot) assignRole(discordID string) error {
-	// Create or get a purple-colored verification role
-	purpleRoleID, err := b.ensurePurpleVerificationRole()
-	if err != nil {
-		log.Printf("Warning: Failed to create/get purple verification role: %v", err)
-		log.Printf("Falling back to original role assignment without color change")
-		// Fall back to original role assignment
-		err = b.session.GuildMemberRoleAdd(b.config.GuildID, discordID, b.config.RoleID)
-		if err != nil {
-			return fmt.Errorf("failed to assign role: %w", err)
-		}
-		log.Printf("Assigned original role to user %s", discordID)
-		return nil
-	}
-
-	// Assign the purple verification role to the user
-	err = b.session.GuildMemberRoleAdd(b.config.GuildID, discordID, purpleRoleID)
-	if err != nil {
-		return fmt.Errorf("failed to assign purple verification role: %w", err)
-	}
-
-	log.Printf("Assigned purple verification role to user %s", discordID)
-	return nil
-}
-
-// ensurePurpleVerificationRole creates or gets a purple-colored verification role
-func (b *Bot) ensurePurpleVerificationRole() (string, error) {
-	// Purple color in Discord format
-	purpleColor := 0x9370DB // Purple in hex = 9641179 in decimal
-
-	// Role name for the purple verification role
-	roleName := "GSwarm"
-
-	// First, try to find an existing purple verification role
-	roles, err := b.session.GuildRoles(b.config.GuildID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get guild roles: %w", err)
-	}
-
-	// Look for existing purple verification role
-	for _, role := range roles {
-		if role.Name == roleName {
-			log.Printf("Found existing purple verification role: %s (ID: %s)", role.Name, role.ID)
-			return role.ID, nil
-		}
-	}
-
-	// Create new purple verification role (cosmetic only, no permissions)
-	log.Printf("Creating new purple verification role: %s", roleName)
-
-	hoist := true
-	mentionable := true
-	permissions := int64(0) // No permissions - purely cosmetic
-
-	roleParams := &discordgo.RoleParams{
-		Name:        roleName,
-		Color:       &purpleColor,
-		Hoist:       &hoist,       // Display role members separately
-		Mentionable: &mentionable, // Allow the role to be mentioned
-		Permissions: &permissions, // No special permissions
-	}
-
-	role, err := b.session.GuildRoleCreate(b.config.GuildID, roleParams)
-	if err != nil {
-		return "", fmt.Errorf("failed to create purple verification role: %w", err)
-	}
-
-	log.Printf("Created purple verification role: %s (ID: %s) - Cosmetic only", role.Name, role.ID)
-	return role.ID, nil
-}
-
-// checkBotPermissions checks if the bot has necessary permissions
-func (b *Bot) checkBotPermissions() error {
-	// Get the bot's user ID
-	botUser, err := b.session.User("@me")
-	if err != nil {
-		return fmt.Errorf("failed to get bot user: %w", err)
-	}
-
-	// Get the guild member info for the bot
-	member, err := b.session.GuildMember(b.config.GuildID, botUser.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get bot member info: %w", err)
-	}
-
-	log.Printf("Bot permissions check - Bot ID: %s, Guild ID: %s", botUser.ID, b.config.GuildID)
-	log.Printf("Bot roles: %v", member.Roles)
-
-	return nil
+	log.Printf("Successfully issued linking code %s for Discord user %s", apiResp.Code, discordID)
+	return apiResp.Code, nil
 }
