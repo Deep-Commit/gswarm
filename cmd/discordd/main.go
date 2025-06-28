@@ -87,6 +87,7 @@ This bot generates linking codes to connect Discord and Telegram accounts.
 
 Features:
 • /link-telegram command for account linking
+• Automatic GSwarm role assignment
 • Integration with G-Swarm API
 • Secure code-based linking system
 
@@ -94,6 +95,7 @@ Account Linking:
 • Users can link their Discord and Telegram accounts
 • Secure code-based verification system
 • Integration with external API endpoints
+• Automatic role assignment for verified users
 
 This is a community project and is not affiliated with the official Gensyn team.`
 }
@@ -123,6 +125,12 @@ func getAppFlags() []cli.Flag {
 			Usage:    "Discord guild (server) ID",
 			Required: false,
 			EnvVars:  []string{"DISCORD_GUILD_ID"},
+		},
+		&cli.StringFlag{
+			Name:     "role-id",
+			Usage:    "Discord role ID to assign to verified users",
+			Required: false,
+			EnvVars:  []string{"DISCORD_ROLE_ID"},
 		},
 	}
 }
@@ -201,7 +209,7 @@ VERSION:
    {{end}}
 EXAMPLES:
    # Start Discord bot with environment variables
-   discordd --discord-token YOUR_TOKEN --api-secret YOUR_SECRET --guild-id YOUR_GUILD
+   discordd --discord-token YOUR_TOKEN --api-secret YOUR_SECRET --guild-id YOUR_GUILD --role-id YOUR_ROLE
 
    # Show version
    discordd version
@@ -212,6 +220,12 @@ ENVIRONMENT VARIABLES:
    - GSWARM_API_URL: G-Swarm API URL (default: https://gswarm.dev/api)
    - GSWARM_API_SECRET: G-Swarm API secret key
    - DISCORD_GUILD_ID: Discord guild (server) ID
+   - DISCORD_ROLE_ID: Discord role ID to assign to verified users (optional)
+
+FEATURES:
+   • /link-telegram: Generate linking codes for Discord-Telegram account linking
+   • Automatic role assignment: Assigns GSwarm role when users use /link-telegram
+   • Secure API integration: Uses external G-Swarm API for account linking
 
 LEARN MORE:
    • GitHub: https://github.com/Deep-Commit/gswarm
@@ -225,6 +239,7 @@ func runDiscordBot(c *cli.Context) error {
 		APIURL:       c.String("api-url"),
 		APISecret:    c.String("api-secret"),
 		GuildID:      c.String("guild-id"),
+		RoleID:       c.String("role-id"),
 	}
 
 	bot, err := discord.NewBot(config)

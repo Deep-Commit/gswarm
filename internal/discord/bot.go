@@ -19,6 +19,7 @@ type Config struct {
 	APIURL       string
 	APISecret    string
 	GuildID      string
+	RoleID       string
 }
 
 // Bot represents the Discord bot instance
@@ -154,6 +155,23 @@ func (b *Bot) respondToInteraction(s *discordgo.Session, i *discordgo.Interactio
 func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	discordID := i.Member.User.ID
 
+	// Check if user already has the role
+	hasRole := false
+	for _, roleID := range i.Member.Roles {
+		if roleID == b.config.RoleID {
+			hasRole = true
+			break
+		}
+	}
+
+	// Assign the role if they don't have it already
+	if !hasRole {
+		if err := b.assignGSwarmRole(discordID); err != nil {
+			log.Printf("Failed to assign role to user %s: %v", discordID, err)
+			// Continue with the linking process even if role assignment fails
+		}
+	}
+
 	// Issue a linking code via the API
 	code, err := b.issueLinkingCode(discordID)
 	if err != nil {
@@ -258,4 +276,21 @@ func (b *Bot) issueLinkingCode(discordID string) (string, error) {
 
 	log.Printf("Successfully issued linking code %s for Discord user %s", apiResp.Code, discordID)
 	return apiResp.Code, nil
+}
+
+// assignGSwarmRole assigns the GSwarm role to a user
+func (b *Bot) assignGSwarmRole(discordID string) error {
+	if b.config.RoleID == "" {
+		log.Printf("No role ID configured, skipping role assignment for user %s", discordID)
+		return nil
+	}
+
+	// Add the role to the user
+	err := b.session.GuildMemberRoleAdd(b.config.GuildID, discordID, b.config.RoleID)
+	if err != nil {
+		return fmt.Errorf("failed to assign GSwarm role to user %s: %w", discordID, err)
+	}
+
+	log.Printf("Successfully assigned GSwarm role to user %s", discordID)
+	return nil
 }

@@ -162,6 +162,7 @@ run-discord:
 	@echo "  DISCORD_BOT_TOKEN=your_discord_bot_token"
 	@echo "  GSWARM_API_SECRET=your_api_secret"
 	@echo "  DISCORD_GUILD_ID=your_guild_id"
+	@echo "  DISCORD_ROLE_ID=your_role_id (optional)"
 	@echo ""
 	@if [ -z "$$DISCORD_BOT_TOKEN" ]; then \
 		echo "❌ DISCORD_BOT_TOKEN not set"; \
@@ -175,7 +176,7 @@ run-discord:
 		echo "❌ DISCORD_GUILD_ID not set"; \
 		exit 1; \
 	fi
-	@echo "✅ All environment variables set, starting Discord bot..."
+	@echo "✅ All required environment variables set, starting Discord bot..."
 	@./build/discordd
 
 # Test the account linking system
