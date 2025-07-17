@@ -131,13 +131,7 @@ func getMainAction() func(c *cli.Context) error {
 	return func(c *cli.Context) error {
 		// Only run the bot if no subcommand is present
 		if c.Args().Len() == 0 {
-			if c.String("discord-token") == "" {
-				return fmt.Errorf("discord-token is required")
-			}
-			if c.String("api-secret") == "" {
-				return fmt.Errorf("api-secret is required")
-			}
-			// Remove guild-id and role-id checks
+			// Remove strict CLI check for discord-token
 			return runDiscordBot(c)
 		}
 		// If a subcommand is present, do nothing (let the subcommand run)
@@ -245,6 +239,10 @@ func runDiscordBot(c *cli.Context) error {
 	}
 	if c.String("api-secret") != "" {
 		yamlConfig.Discord.APISecret = c.String("api-secret")
+	}
+
+	if yamlConfig.Discord.DiscordToken == "" {
+		return fmt.Errorf("discord-token is required (set in config.yaml or via CLI/env)")
 	}
 
 	bot, err := discord.NewBot(&yamlConfig.Discord)
