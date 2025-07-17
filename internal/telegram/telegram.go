@@ -1254,15 +1254,17 @@ func (t *TelegramService) GetPeerIDs(eoaAddress string) ([]string, error) {
 	return nil, fmt.Errorf("no peer IDs found for address: %s on any contract", eoaAddress)
 }
 
-// getChangeIndicator returns an emoji indicating if a value increased, decreased, or stayed the same
+// getChangeIndicator returns an emoji and the numeric delta if a value changed
 func getChangeIndicator(previous, current *big.Int) string {
 	cmp := current.Cmp(previous)
 	if cmp > 0 {
-		return "📈"
+		delta := new(big.Int).Sub(current, previous)
+		return fmt.Sprintf("📈 (+%s)", delta.String())
 	} else if cmp < 0 {
-		return "📉"
+		delta := new(big.Int).Sub(previous, current)
+		return fmt.Sprintf("📉 (-%s)", delta.String())
 	}
-	return "➡️"
+	return "➡️ (0)"
 }
 
 // decodePeerIDs uses ABI-aware decoding to extract peer IDs from the contract response
