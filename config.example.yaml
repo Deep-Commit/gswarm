@@ -14,10 +14,12 @@ api:
 discord:
   # Bot token from Discord Developer Portal
   token: "your_discord_bot_token_here"
-  # Guild (server) ID where the bot operates
-  guild_id: "your_discord_guild_id_here"
-  # Role ID to assign to verified users (optional)
-  role_id: "your_discord_role_id_here"
+  # List of guilds (servers) the bot operates in
+  guilds:
+    - id: "your_discord_guild_id_1"
+      role_id: "your_discord_role_id_1"
+    - id: "your_discord_guild_id_2"
+      role_id: "your_discord_role_id_2"
 
 # Telegram Bot Configuration
 telegram:

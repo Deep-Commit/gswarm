@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/urfave/cli/v2 v2.27.5
 	go.uber.org/zap v1.27.0
+	gopkg.in/yaml.v3 v3.0.1 // for YAML config loading
 )
 
 require (

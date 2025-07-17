@@ -12,20 +12,14 @@ services:
     container_name: gswarm-discord-bot
     restart: unless-stopped
     environment:
-      # Discord Bot Configuration
-      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
-      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
-      - DISCORD_ROLE_ID=${DISCORD_ROLE_ID}
-      
       # G-Swarm API Configuration
       - GSWARM_API_URL=${GSWARM_API_URL:-https://gswarm.dev/api}
       - GSWARM_API_SECRET=${GSWARM_API_SECRET}
-      
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./logs:/app/logs
-      - ./config:/app/config
+      - ./config.yaml:/app/config.yaml
     healthcheck:
       test: ["CMD", "pgrep", "-f", "discordd"]
       interval: 30s

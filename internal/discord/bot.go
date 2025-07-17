@@ -14,12 +14,16 @@ import (
 )
 
 // Config holds the Discord bot configuration
+type GuildConfig struct {
+	ID     string `yaml:"id"`
+	RoleID string `yaml:"role_id"`
+}
+
 type Config struct {
-	DiscordToken string
+	DiscordToken string `yaml:"token"`
 	APIURL       string
 	APISecret    string
-	GuildID      string
-	RoleID       string
+	Guilds       []GuildConfig `yaml:"guilds"`
 }
 
 // Bot represents the Discord bot instance
@@ -28,6 +32,16 @@ type Bot struct {
 	session *discordgo.Session
 	ctx     context.Context
 	cancel  context.CancelFunc
+}
+
+// Helper to get GuildConfig by guild ID
+func (b *Bot) getGuildConfig(guildID string) *GuildConfig {
+	for _, g := range b.config.Guilds {
+		if g.ID == guildID {
+			return &g
+		}
+	}
+	return nil
 }
 
 // NewBot creates a new Discord bot instance
@@ -116,13 +130,15 @@ func (b *Bot) registerCommands() error {
 		},
 	}
 
-	// Register commands for the guild
-	for _, cmd := range commands {
-		_, err := b.session.ApplicationCommandCreate(b.session.State.User.ID, b.config.GuildID, cmd)
-		if err != nil {
-			return fmt.Errorf("failed to register command %s: %w", cmd.Name, err)
+	// Register commands for all configured guilds
+	for _, guild := range b.config.Guilds {
+		for _, cmd := range commands {
+			_, err := b.session.ApplicationCommandCreate(b.session.State.User.ID, guild.ID, cmd)
+			if err != nil {
+				return fmt.Errorf("failed to register command %s for guild %s: %w", cmd.Name, guild.ID, err)
+			}
+			log.Printf("Registered command: %s for guild: %s", cmd.Name, guild.ID)
 		}
-		log.Printf("Registered command: %s", cmd.Name)
 	}
 
 	return nil
@@ -154,11 +170,18 @@ func (b *Bot) respondToInteraction(s *discordgo.Session, i *discordgo.Interactio
 // handleLinkTelegramCommand handles the /link-telegram command
 func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	discordID := i.Member.User.ID
+	guildID := i.GuildID
+	guildCfg := b.getGuildConfig(guildID)
+	if guildCfg == nil {
+		log.Printf("No config found for guild %s", guildID)
+		b.respondToInteraction(s, i, "❌ This server is not configured for account linking.", true)
+		return
+	}
 
 	// Check if user already has the role
 	hasRole := false
 	for _, roleID := range i.Member.Roles {
-		if roleID == b.config.RoleID {
+		if roleID == guildCfg.RoleID {
 			hasRole = true
 			break
 		}
@@ -166,7 +189,7 @@ func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.Inter
 
 	// Assign the role if they don't have it already
 	if !hasRole {
-		if err := b.assignGSwarmRole(discordID); err != nil {
+		if err := b.assignGSwarmRole(discordID, guildCfg); err != nil {
 			log.Printf("Failed to assign role to user %s: %v", discordID, err)
 			// Continue with the linking process even if role assignment fails
 		}
@@ -180,7 +203,7 @@ func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.Inter
 		return
 	}
 
-	// Send the code to the user via DM
+	// Always send the code as an ephemeral message
 	message := fmt.Sprintf("🔗 **Discord-Telegram Account Linking**\n\n"+
 		"Here's your linking code: **`%s`**\n\n"+
 		"**Instructions:**\n"+
@@ -192,23 +215,7 @@ func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.Inter
 		"• Keep it private and don't share it\n"+
 		"• Each code can only be used once", code, code)
 
-	// Try to send DM first
-	channel, err := s.UserChannelCreate(discordID)
-	if err != nil {
-		// If DM fails, respond in the channel
-		b.respondToInteraction(s, i, "❌ Unable to send you a DM. Please check your privacy settings and try again.", true)
-		return
-	}
-
-	_, err = s.ChannelMessageSend(channel.ID, message)
-	if err != nil {
-		// If DM fails, respond in the channel
-		b.respondToInteraction(s, i, "❌ Unable to send you a DM. Please check your privacy settings and try again.", true)
-		return
-	}
-
-	// Confirm in the channel that the code was sent
-	b.respondToInteraction(s, i, "✅ Linking code sent to your DMs! Check your private messages.", true)
+	b.respondToInteraction(s, i, message, true)
 }
 
 // issueLinkingCode calls the API to issue a linking code
@@ -279,18 +286,18 @@ func (b *Bot) issueLinkingCode(discordID string) (string, error) {
 }
 
 // assignGSwarmRole assigns the GSwarm role to a user
-func (b *Bot) assignGSwarmRole(discordID string) error {
-	if b.config.RoleID == "" {
+func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
+	if guildCfg.RoleID == "" {
 		log.Printf("No role ID configured, skipping role assignment for user %s", discordID)
 		return nil
 	}
 
 	// Add the role to the user
-	err := b.session.GuildMemberRoleAdd(b.config.GuildID, discordID, b.config.RoleID)
+	err := b.session.GuildMemberRoleAdd(guildCfg.ID, discordID, guildCfg.RoleID)
 	if err != nil {
 		return fmt.Errorf("failed to assign GSwarm role to user %s: %w", discordID, err)
 	}
 
-	log.Printf("Successfully assigned GSwarm role to user %s", discordID)
+	log.Printf("Successfully assigned GSwarm role to user %s in guild %s", discordID, guildCfg.ID)
 	return nil
 }

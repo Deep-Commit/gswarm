@@ -48,8 +48,12 @@ func main() {
 		DiscordToken: *discordToken,
 		APIURL:       *apiURL,
 		APISecret:    *apiKey,
-		GuildID:      *discordGuild,
-		RoleID:       *discordRole,
+		Guilds: []discord.GuildConfig{
+			{
+				ID:     *discordGuild,
+				RoleID: *discordRole,
+			},
+		},
 	}
 
 	discordBot, err := discord.NewBot(discordConfig)

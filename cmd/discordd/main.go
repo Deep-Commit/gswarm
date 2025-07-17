@@ -8,8 +8,11 @@ import (
 	"strings"
 	"syscall"
 
+	"io/ioutil"
+
 	"github.com/Deep-Commit/gswarm/internal/discord"
 	"github.com/urfave/cli/v2"
+	"gopkg.in/yaml.v3"
 )
 
 // Version information
@@ -120,18 +123,7 @@ func getAppFlags() []cli.Flag {
 			Required: false,
 			EnvVars:  []string{"GSWARM_API_SECRET"},
 		},
-		&cli.StringFlag{
-			Name:     "guild-id",
-			Usage:    "Discord guild (server) ID",
-			Required: false,
-			EnvVars:  []string{"DISCORD_GUILD_ID"},
-		},
-		&cli.StringFlag{
-			Name:     "role-id",
-			Usage:    "Discord role ID to assign to verified users",
-			Required: false,
-			EnvVars:  []string{"DISCORD_ROLE_ID"},
-		},
+		// Remove guild-id and role-id flags
 	}
 }
 
@@ -145,9 +137,7 @@ func getMainAction() func(c *cli.Context) error {
 			if c.String("api-secret") == "" {
 				return fmt.Errorf("api-secret is required")
 			}
-			if c.String("guild-id") == "" {
-				return fmt.Errorf("guild-id is required")
-			}
+			// Remove guild-id and role-id checks
 			return runDiscordBot(c)
 		}
 		// If a subcommand is present, do nothing (let the subcommand run)
@@ -234,15 +224,30 @@ LEARN MORE:
 }
 
 func runDiscordBot(c *cli.Context) error {
-	config := &discord.Config{
-		DiscordToken: c.String("discord-token"),
-		APIURL:       c.String("api-url"),
-		APISecret:    c.String("api-secret"),
-		GuildID:      c.String("guild-id"),
-		RoleID:       c.String("role-id"),
+	// Load Discord config from YAML file (config.yaml)
+	configPath := "config.yaml"
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config.yaml: %w", err)
+	}
+	var yamlConfig struct {
+		Discord discord.Config `yaml:"discord"`
+	}
+	if err := yaml.Unmarshal(data, &yamlConfig); err != nil {
+		return fmt.Errorf("failed to parse discord config: %w", err)
+	}
+	// Override token, API URL, and secret from CLI/env if provided
+	if c.String("discord-token") != "" {
+		yamlConfig.Discord.DiscordToken = c.String("discord-token")
+	}
+	if c.String("api-url") != "" {
+		yamlConfig.Discord.APIURL = c.String("api-url")
+	}
+	if c.String("api-secret") != "" {
+		yamlConfig.Discord.APISecret = c.String("api-secret")
 	}
 
-	bot, err := discord.NewBot(config)
+	bot, err := discord.NewBot(&yamlConfig.Discord)
 	if err != nil {
 		return fmt.Errorf("failed to create Discord bot: %w", err)
 	}
