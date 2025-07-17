@@ -54,11 +54,22 @@ type BlockchainData struct {
 	Balance *big.Int
 }
 
+// PeerPreviousData stores previous values for a single peer
+// Used for per-peer delta tracking
+// Add more fields as needed (e.g., Rank, Wins)
+type PeerPreviousData struct {
+	Votes   string `json:"votes"`
+	Rewards string `json:"rewards"`
+}
+
 // PreviousData stores the previous blockchain data for comparison
+// Now supports both total and per-peer tracking
+// The Peers map key is the peer ID
 type PreviousData struct {
-	Votes     *big.Int  `json:"votes"`
-	Rewards   *big.Int  `json:"rewards"`
-	LastCheck time.Time `json:"last_check"`
+	Votes     *big.Int                    `json:"votes"`   // total
+	Rewards   *big.Int                    `json:"rewards"` // total
+	Peers     map[string]PeerPreviousData `json:"peers"`   // per-peer
+	LastCheck time.Time                   `json:"last_check"`
 }
 
 // TelegramService represents the telegram monitoring service
@@ -77,7 +88,7 @@ func NewTelegramService(configPath string, forceUpdate bool) *TelegramService {
 	return &TelegramService{
 		ConfigPath:        configPath,
 		ForceConfigUpdate: forceUpdate,
-		PreviousData:      &PreviousData{Votes: big.NewInt(0), Rewards: big.NewInt(0)},
+		PreviousData:      &PreviousData{Votes: big.NewInt(0), Rewards: big.NewInt(0), Peers: make(map[string]PeerPreviousData)},
 		StopChan:          make(chan bool),
 	}
 }
@@ -298,7 +309,7 @@ func (t *TelegramService) Run() error {
 	previousData, err := t.loadPreviousData()
 	if err != nil {
 		fmt.Printf("Warning: Could not load previous data: %v\n", err)
-		previousData = &PreviousData{Votes: big.NewInt(0), Rewards: big.NewInt(0), LastCheck: time.Now()}
+		previousData = &PreviousData{Votes: big.NewInt(0), Rewards: big.NewInt(0), Peers: make(map[string]PeerPreviousData)}
 	} else {
 		fmt.Printf("Loaded previous data - Votes: %s, Rewards: %s, Last Check: %s\n",
 			previousData.Votes.String(), previousData.Rewards.String(), previousData.LastCheck.Format("2006-01-02 15:04:05"))
@@ -1026,6 +1037,9 @@ func (t *TelegramService) savePreviousData(data *PreviousData) error {
 		"rewards":    data.Rewards.String(),
 		"last_check": data.LastCheck.Format(time.RFC3339),
 	}
+	if data.Peers != nil {
+		dataToSave["peers"] = data.Peers
+	}
 
 	filePath := "telegram_previous_data.json"
 	file, err := os.Create(filePath)
@@ -1049,6 +1063,7 @@ func (t *TelegramService) loadPreviousData() (*PreviousData, error) {
 			return &PreviousData{
 				Votes:     big.NewInt(0),
 				Rewards:   big.NewInt(0),
+				Peers:     make(map[string]PeerPreviousData),
 				LastCheck: time.Now(),
 			}, nil
 		}
@@ -1088,9 +1103,27 @@ func (t *TelegramService) loadPreviousData() (*PreviousData, error) {
 		return nil, fmt.Errorf("failed to parse last_check time: %w", err)
 	}
 
+	// Parse peers map (optional, for backward compatibility)
+	peers := make(map[string]PeerPreviousData)
+	if peersRaw, ok := dataMap["peers"]; ok && peersRaw != nil {
+		if peersMap, ok := peersRaw.(map[string]interface{}); ok {
+			for peerID, v := range peersMap {
+				if peerData, ok := v.(map[string]interface{}); ok {
+					votesStr, _ := peerData["votes"].(string)
+					rewardsStr, _ := peerData["rewards"].(string)
+					peers[peerID] = PeerPreviousData{
+						Votes:   votesStr,
+						Rewards: rewardsStr,
+					}
+				}
+			}
+		}
+	}
+
 	return &PreviousData{
 		Votes:     votes,
 		Rewards:   rewards,
+		Peers:     peers,
 		LastCheck: lastCheck,
 	}, nil
 }
