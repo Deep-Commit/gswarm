@@ -466,6 +466,9 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 
 		// Build per-peer breakdown
 		var peerBreakdown strings.Builder
+		if previousData.Peers == nil {
+			previousData.Peers = make(map[string]PeerPreviousData)
+		}
 		for i, data := range peerData {
 			// Truncate the peer ID for better readability
 			peerID := data.PeerID
@@ -473,21 +476,36 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 				peerID = peerID[:3] + "..." + peerID[len(peerID)-3:]
 			}
 
+			// Get previous values for this peer (if any)
+			prevPeer := previousData.Peers[data.PeerID]
+			prevVotes := new(big.Int)
+			prevVotes.SetString(prevPeer.Votes, 10)
+			prevRewards := new(big.Int)
+			prevRewards.SetString(prevPeer.Rewards, 10)
+
+			// Compute deltas
+			votesDelta := getChangeIndicator(prevVotes, data.Votes)
+			rewardsBig := new(big.Int)
+			if data.Rank != nil {
+				rewardsBig.SetInt64(int64(data.Rank.TotalRewards))
+			} else if data.Rewards != nil {
+				rewardsBig.SetString(data.Rewards.String(), 10)
+			}
+			rewardsDelta := getChangeIndicator(prevRewards, rewardsBig)
+
 			peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
-			peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s\n", data.Votes.String()))
-			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %d\n",
+			peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s %s\n", data.Votes.String(), votesDelta))
+			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %d %s\n",
 				func() int {
 					if data.Rank != nil {
 						return data.Rank.TotalRewards
 					}
-					// fallback to data.Rewards if no rank info
 					if data.Rewards != nil {
 						v, _ := new(big.Int).SetString(data.Rewards.String(), 10)
 						return int(v.Int64())
 					}
 					return 0
-				}(),
-			))
+				}(), rewardsDelta))
 
 			// Add rank information if available
 			if data.Rank != nil {
@@ -544,6 +562,22 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		previousData.Votes = totalVotes
 		previousData.Rewards = totalRewards
 		previousData.LastCheck = time.Now()
+
+		// Update per-peer previous data
+		for _, data := range peerData {
+			peerID := data.PeerID
+			votesStr := data.Votes.String()
+			rewardsStr := "0"
+			if data.Rank != nil {
+				rewardsStr = fmt.Sprintf("%d", data.Rank.TotalRewards)
+			} else if data.Rewards != nil {
+				rewardsStr = data.Rewards.String()
+			}
+			previousData.Peers[peerID] = PeerPreviousData{
+				Votes:   votesStr,
+				Rewards: rewardsStr,
+			}
+		}
 
 		// Save updated data
 		if err := t.savePreviousData(previousData); err != nil {
