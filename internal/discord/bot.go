@@ -16,9 +16,8 @@ import (
 
 // Config holds the Discord bot configuration
 type GuildConfig struct {
-	ID              string   `yaml:"id"`
-	RoleID          string   `yaml:"role_id"`
-	AllowedChannels []string `yaml:"allowed_channels,omitempty"` // Optional: restrict role assignment to specific channels
+	ID     string `yaml:"id"`
+	RoleID string `yaml:"role_id"`
 }
 
 type Config struct {
@@ -193,28 +192,13 @@ func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.Inter
 		}
 	}
 
-	// Check if role assignment is allowed in this channel
-	roleAssignmentAllowed := true
-	if len(guildCfg.AllowedChannels) > 0 {
-		roleAssignmentAllowed = false
-		for _, allowedChannel := range guildCfg.AllowedChannels {
-			if allowedChannel == channelID {
-				roleAssignmentAllowed = true
-				break
-			}
-		}
-	}
-
-	// Assign the role if they don't have it already and channel is allowed
-	if !hasRole && roleAssignmentAllowed {
+	// Assign the role if they don't have it already
+	if !hasRole {
 		log.Printf("Attempting to assign role %s to user %s in guild %s", guildCfg.RoleID, discordID, guildID)
 		if err := b.assignGSwarmRole(discordID, guildCfg); err != nil {
 			log.Printf("Failed to assign role to user %s: %v", discordID, err)
 			// Continue with the linking process even if role assignment fails
 		}
-	} else if !hasRole && !roleAssignmentAllowed {
-		log.Printf("Role assignment not allowed in channel %s for guild %s", channelID, guildID)
-		// Continue without role assignment
 	}
 
 	// Issue a linking code via the API
