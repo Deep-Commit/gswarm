@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -15,8 +16,9 @@ import (
 
 // Config holds the Discord bot configuration
 type GuildConfig struct {
-	ID     string `yaml:"id"`
-	RoleID string `yaml:"role_id"`
+	ID              string   `yaml:"id"`
+	RoleID          string   `yaml:"role_id"`
+	AllowedChannels []string `yaml:"allowed_channels,omitempty"` // Optional: restrict role assignment to specific channels
 }
 
 type Config struct {
@@ -171,6 +173,10 @@ func (b *Bot) respondToInteraction(s *discordgo.Session, i *discordgo.Interactio
 func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	discordID := i.Member.User.ID
 	guildID := i.GuildID
+	channelID := i.ChannelID
+
+	log.Printf("Command received from Guild: %s, Channel: %s, User: %s", guildID, channelID, discordID)
+
 	guildCfg := b.getGuildConfig(guildID)
 	if guildCfg == nil {
 		log.Printf("No config found for guild %s", guildID)
@@ -187,12 +193,28 @@ func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.Inter
 		}
 	}
 
-	// Assign the role if they don't have it already
-	if !hasRole {
+	// Check if role assignment is allowed in this channel
+	roleAssignmentAllowed := true
+	if len(guildCfg.AllowedChannels) > 0 {
+		roleAssignmentAllowed = false
+		for _, allowedChannel := range guildCfg.AllowedChannels {
+			if allowedChannel == channelID {
+				roleAssignmentAllowed = true
+				break
+			}
+		}
+	}
+
+	// Assign the role if they don't have it already and channel is allowed
+	if !hasRole && roleAssignmentAllowed {
+		log.Printf("Attempting to assign role %s to user %s in guild %s", guildCfg.RoleID, discordID, guildID)
 		if err := b.assignGSwarmRole(discordID, guildCfg); err != nil {
 			log.Printf("Failed to assign role to user %s: %v", discordID, err)
 			// Continue with the linking process even if role assignment fails
 		}
+	} else if !hasRole && !roleAssignmentAllowed {
+		log.Printf("Role assignment not allowed in channel %s for guild %s", channelID, guildID)
+		// Continue without role assignment
 	}
 
 	// Issue a linking code via the API
@@ -292,12 +314,60 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 		return nil
 	}
 
+	// First, try to get the existing role to check if it exists
+	role, err := b.session.State.Role(guildCfg.ID, guildCfg.RoleID)
+	if err != nil || role == nil {
+		log.Printf("Role %s not found, attempting to create it", guildCfg.RoleID)
+
+		// Create the role if it doesn't exist
+		role, err = b.createGSwarmRole(guildCfg.ID)
+		if err != nil {
+			log.Printf("Failed to create GSwarm role: %v", err)
+			return fmt.Errorf("failed to create GSwarm role: %w", err)
+		}
+
+		// Update the config with the new role ID
+		guildCfg.RoleID = role.ID
+		log.Printf("Created new GSwarm role with ID: %s", role.ID)
+	}
+
 	// Add the role to the user
-	err := b.session.GuildMemberRoleAdd(guildCfg.ID, discordID, guildCfg.RoleID)
+	err = b.session.GuildMemberRoleAdd(guildCfg.ID, discordID, guildCfg.RoleID)
 	if err != nil {
+		// Provide more detailed error information
+		if strings.Contains(err.Error(), "50001") {
+			return fmt.Errorf("missing permissions - ensure bot role is higher than target role in hierarchy: %w", err)
+		}
+		if strings.Contains(err.Error(), "50013") {
+			return fmt.Errorf("missing permissions - ensure bot has 'Manage Roles' permission: %w", err)
+		}
 		return fmt.Errorf("failed to assign GSwarm role to user %s: %w", discordID, err)
 	}
 
 	log.Printf("Successfully assigned GSwarm role to user %s in guild %s", discordID, guildCfg.ID)
 	return nil
+}
+
+// createGSwarmRole creates a new GSwarm role with purple color
+func (b *Bot) createGSwarmRole(guildID string) (*discordgo.Role, error) {
+	// Purple color (RGB: 128, 0, 128)
+	purpleColor := 8388736
+	hoist := false
+	permissions := int64(0)
+	mentionable := false
+
+	role, err := b.session.GuildRoleCreate(guildID, &discordgo.RoleParams{
+		Name:        "GSwarm",
+		Color:       &purpleColor,
+		Hoist:       &hoist,       // Don't show members with this role separately
+		Permissions: &permissions, // No special permissions
+		Mentionable: &mentionable, // Don't allow mentions
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GSwarm role: %w", err)
+	}
+
+	log.Printf("Successfully created GSwarm role: %s (ID: %s)", role.Name, role.ID)
+	return role, nil
 }
