@@ -307,23 +307,14 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 
 	log.Printf("Starting role assignment process for user %s with role ID %s", discordID, guildCfg.RoleID)
 
-	// First, try to get the existing role to check if it exists
+	// Check if the configured role exists
 	role, err := b.session.State.Role(guildCfg.ID, guildCfg.RoleID)
 	if err != nil || role == nil {
-		log.Printf("Role %s not found in guild state, attempting to create it", guildCfg.RoleID)
-
-		// Create the role if it doesn't exist
-		role, err = b.createGSwarmRole(guildCfg.ID)
-		if err != nil {
-			log.Printf("Failed to create GSwarm role: %v", err)
-			return fmt.Errorf("failed to create GSwarm role: %w", err)
-		}
-
-		log.Printf("Created new GSwarm role with ID: %s", role.ID)
-		log.Printf("Note: Using configured role ID %s, not the newly created role ID %s", guildCfg.RoleID, role.ID)
-	} else {
-		log.Printf("Found existing role: %s (%s)", role.Name, role.ID)
+		log.Printf("Role %s not found in guild %s - role must be created manually by server admin", guildCfg.RoleID, guildCfg.ID)
+		return fmt.Errorf("configured role %s does not exist in guild %s - please create the role manually", guildCfg.RoleID, guildCfg.ID)
 	}
+
+	log.Printf("Found configured role: %s (%s)", role.Name, role.ID)
 
 	// Double-check if user already has the role before assigning
 	member, err := b.session.GuildMember(guildCfg.ID, discordID)
@@ -355,28 +346,4 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 
 	log.Printf("Successfully assigned GSwarm role to user %s in guild %s", discordID, guildCfg.ID)
 	return nil
-}
-
-// createGSwarmRole creates a new GSwarm role with purple color
-func (b *Bot) createGSwarmRole(guildID string) (*discordgo.Role, error) {
-	// Purple color (RGB: 128, 0, 128)
-	purpleColor := 8388736
-	hoist := false
-	permissions := int64(0)
-	mentionable := false
-
-	role, err := b.session.GuildRoleCreate(guildID, &discordgo.RoleParams{
-		Name:        "GSwarm",
-		Color:       &purpleColor,
-		Hoist:       &hoist,       // Don't show members with this role separately
-		Permissions: &permissions, // No special permissions
-		Mentionable: &mentionable, // Don't allow mentions
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GSwarm role: %w", err)
-	}
-
-	log.Printf("Successfully created GSwarm role: %s (ID: %s)", role.Name, role.ID)
-	return role, nil
 }

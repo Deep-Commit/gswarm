@@ -16,7 +16,7 @@ A dedicated Go-based Telegram monitoring service for Gensyn AI that provides rea
 - 🛡️ **Secure Configuration**: Local config file storage
 - 🔍 **Peer ID Monitoring**: Track all peer IDs associated with your EOA address
 - ⏰ **Continuous Monitoring**: Checks every 5 minutes for changes
-- 🤖 **Discord Integration**: Optional verification system with purple role assignment
+- 🤖 **Discord Integration**: Optional verification system with role assignment
 - 🔐 **Secure Verification**: Time-limited codes for Discord community access
 
 ## 🔐 Discord Verification (Optional)
@@ -26,7 +26,7 @@ GSwarm includes an optional Discord verification system that allows you to get v
 ### What is Discord Verification?
 
 The Discord verification system allows you to:
-- Get a special purple "GSwarm" role in the Discord server
+- Get a special "GSwarm" role in the Discord server
 - Access verified-only channels and features
 - Show your verification status to other community members
 - Display your node statistics and ranking information
@@ -37,11 +37,11 @@ The Discord verification system allows you to:
 2. **Receive a verification code** (valid for 15 minutes)
 3. **Join the Discord server**: [https://discord.gg/gswarm](https://discord.gg/gswarm)
 4. **Use the verification command**: `/verify <code>` in Discord
-5. **Get automatically assigned** the purple "GSwarm" role
+5. **Get automatically assigned** the "GSwarm" role
 
 ### Verification Features
 
-- **Cosmetic Role**: The purple "GSwarm" role is purely cosmetic with no special permissions
+- **Cosmetic Role**: The "GSwarm" role is purely cosmetic with no special permissions
 - **Automatic Assignment**: The Discord bot automatically assigns the role upon successful verification
 - **No Conflicts**: The verification role won't interfere with your existing role colors
 - **Fallback Support**: If verification fails, you can still use all monitoring features

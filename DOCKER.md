@@ -132,7 +132,7 @@ docker-compose run --rm discord-bot ./discordd --help
    - **Use Slash Commands**: Required for the `/verify` command
 7. Invite the bot to your server with appropriate permissions
 
-**Note**: The bot will automatically create a purple-colored verification role called "GSwarm-Verified-Purple" when assigning roles. This role is purely cosmetic (no special permissions) and is used to tag/identify verified users. This approach ensures that users' existing role colors are not affected. If the bot cannot create the purple role (due to permissions), it will fall back to assigning the original verification role.
+**Note**: The bot will only assign the role specified in the configuration. The role must be created manually by a server administrator before the bot can assign it to users. The bot will not create any roles automatically.
 
 ### G-Swarm API Setup
 
@@ -200,11 +200,11 @@ docker inspect gswarm-discord-bot
    - Check role assignment permissions
    - Verify guild ID is correct
 
-4. **Role appears grey instead of purple**
-   - Ensure bot has "Manage Roles" permission to create the purple verification role
-   - Check that the bot can create new roles in the server
-   - Verify the bot's role is positioned high enough in the hierarchy to create roles
-   - Check bot logs for permission errors during purple role creation
+4. **Role assignment fails**
+   - Ensure bot has "Manage Roles" permission to assign the configured role
+   - Check that the configured role exists in the server
+   - Verify the bot's role is positioned high enough in the hierarchy to assign the target role
+   - Check bot logs for permission errors during role assignment
 
 ### Debug Mode
 

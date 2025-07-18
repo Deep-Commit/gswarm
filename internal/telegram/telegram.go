@@ -254,7 +254,7 @@ func (t *TelegramService) Run() error {
 		fmt.Printf("Error: %v\n", err)
 		return err
 	}
-	fmt.Printf("Loaded Telegram config: BotToken=%s, ChatID=%s\n", t.Config.BotToken, t.Config.ChatID)
+	fmt.Printf("Loaded Telegram config: BotToken=[REDACTED], ChatID=%s\n", t.Config.ChatID)
 
 	// Send welcome message if not sent before
 	if !t.Config.WelcomeSent {
