@@ -185,20 +185,27 @@ func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.Inter
 
 	// Check if user already has the role
 	hasRole := false
+	log.Printf("Checking roles for user %s in guild %s", discordID, guildID)
+	log.Printf("User roles: %v", i.Member.Roles)
+	log.Printf("Target role ID: %s", guildCfg.RoleID)
+
 	for _, roleID := range i.Member.Roles {
 		if roleID == guildCfg.RoleID {
 			hasRole = true
+			log.Printf("User already has role %s", roleID)
 			break
 		}
 	}
 
 	// Assign the role if they don't have it already
 	if !hasRole {
-		log.Printf("Attempting to assign role %s to user %s in guild %s", guildCfg.RoleID, discordID, guildID)
+		log.Printf("User does not have role %s, attempting to assign", guildCfg.RoleID)
 		if err := b.assignGSwarmRole(discordID, guildCfg); err != nil {
 			log.Printf("Failed to assign role to user %s: %v", discordID, err)
 			// Continue with the linking process even if role assignment fails
 		}
+	} else {
+		log.Printf("User already has role %s, skipping assignment", guildCfg.RoleID)
 	}
 
 	// Issue a linking code via the API
@@ -298,10 +305,12 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 		return nil
 	}
 
+	log.Printf("Starting role assignment process for user %s with role ID %s", discordID, guildCfg.RoleID)
+
 	// First, try to get the existing role to check if it exists
 	role, err := b.session.State.Role(guildCfg.ID, guildCfg.RoleID)
 	if err != nil || role == nil {
-		log.Printf("Role %s not found, attempting to create it", guildCfg.RoleID)
+		log.Printf("Role %s not found in guild state, attempting to create it", guildCfg.RoleID)
 
 		// Create the role if it doesn't exist
 		role, err = b.createGSwarmRole(guildCfg.ID)
@@ -310,12 +319,28 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 			return fmt.Errorf("failed to create GSwarm role: %w", err)
 		}
 
-		// Update the config with the new role ID
-		guildCfg.RoleID = role.ID
 		log.Printf("Created new GSwarm role with ID: %s", role.ID)
+		log.Printf("Note: Using configured role ID %s, not the newly created role ID %s", guildCfg.RoleID, role.ID)
+	} else {
+		log.Printf("Found existing role: %s (%s)", role.Name, role.ID)
+	}
+
+	// Double-check if user already has the role before assigning
+	member, err := b.session.GuildMember(guildCfg.ID, discordID)
+	if err != nil {
+		log.Printf("Failed to get guild member for user %s: %v", discordID, err)
+		return fmt.Errorf("failed to get guild member: %w", err)
+	}
+
+	for _, memberRoleID := range member.Roles {
+		if memberRoleID == guildCfg.RoleID {
+			log.Printf("User %s already has role %s, skipping assignment", discordID, guildCfg.RoleID)
+			return nil
+		}
 	}
 
 	// Add the role to the user
+	log.Printf("Adding role %s to user %s in guild %s", guildCfg.RoleID, discordID, guildCfg.ID)
 	err = b.session.GuildMemberRoleAdd(guildCfg.ID, discordID, guildCfg.RoleID)
 	if err != nil {
 		// Provide more detailed error information
