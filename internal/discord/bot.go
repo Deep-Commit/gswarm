@@ -453,8 +453,19 @@ func (b *Bot) getPendingRoleAssignments() ([]string, error) {
 	var discordIDs []string
 	for _, assignment := range response.PendingAssignments {
 		if assignment.RoleAssignedAt == nil { // Only include users who haven't had roles assigned
-			// Convert DiscordID to string
-			discordIDStr := fmt.Sprintf("%v", assignment.DiscordID)
+			// Convert DiscordID to string properly (handle large numbers)
+			var discordIDStr string
+			switch v := assignment.DiscordID.(type) {
+			case float64:
+				discordIDStr = fmt.Sprintf("%.0f", v) // Use %.0f to avoid scientific notation
+			case int64:
+				discordIDStr = fmt.Sprintf("%d", v)
+			case string:
+				discordIDStr = v
+			default:
+				discordIDStr = fmt.Sprintf("%v", v)
+			}
+
 			discordIDs = append(discordIDs, discordIDStr)
 			log.Printf("Found pending user: %s (Telegram: %v)", discordIDStr, assignment.TelegramID)
 		}
