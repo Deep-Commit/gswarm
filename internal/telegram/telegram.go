@@ -315,14 +315,14 @@ func (t *TelegramService) Run() error {
 			previousData.Votes.String(), previousData.Rewards.String(), previousData.LastCheck.Format("2006-01-02 15:04:05"))
 	}
 
-	fmt.Println("Starting continuous monitoring loop (checking every 5 minutes)...")
+	fmt.Println("Starting continuous monitoring loop (checking every hour)...")
 	fmt.Println("Press Ctrl+C to stop monitoring")
 
 	// Start message polling in a separate goroutine
 	go t.startMessagePolling()
 
 	// Start the monitoring loop
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
 	// Set up signal handling for graceful shutdown
@@ -1173,7 +1173,7 @@ func (t *TelegramService) sendWelcomeMessage(code string) error {
 This bot monitors your Gensyn AI node activity and notifies you when your votes or rewards increase.
 
 <b>Features:</b>
-• Monitors votes and rewards every 5 minutes
+• Monitors votes and rewards every hour
 • Sends notifications only when there are changes
 • Tracks progress across multiple contracts
 
@@ -1199,7 +1199,7 @@ Thank you for using G-Swarm Monitor! 🚀`, code)
 This bot monitors your Gensyn AI node activity and notifies you when your votes or rewards increase.
 
 <b>Features:</b>
-• Monitors votes and rewards every 5 minutes
+• Monitors votes and rewards every hour
 • Sends notifications only when there are changes
 • Tracks progress across multiple contracts
 
@@ -1422,7 +1422,7 @@ func (t *TelegramService) sendWelcomeMessageWithInstructions(code string) error 
 This bot monitors your Gensyn AI node activity and notifies you when your votes or rewards increase.
 
 <b>Features:</b>
-• Monitors votes and rewards every 5 minutes
+• Monitors votes and rewards every hour
 • Sends notifications only when there are changes
 • Tracks progress across multiple contracts
 
