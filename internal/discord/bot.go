@@ -306,34 +306,12 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 
 	// log.Printf("Found configured role: %s (%s)", role.Name, role.ID)
 
-	// Double-check if user already has the role before assigning
-	member, err := b.session.GuildMember(guildCfg.ID, discordID)
-	if err != nil {
-		log.Printf("Failed to get guild member for user %s: %v", discordID, err)
-		// Check if it's a "user not in guild" error
-		if strings.Contains(err.Error(), "10007") || strings.Contains(err.Error(), "Unknown Member") {
-			log.Printf("User %s is not a member of guild %s, skipping role assignment", discordID, guildCfg.ID)
-			return fmt.Errorf("user %s is not a member of guild %s", discordID, guildCfg.ID)
-		}
-		if strings.Contains(err.Error(), "10013") || strings.Contains(err.Error(), "Unknown User") {
-			log.Printf("User %s does not exist, skipping role assignment", discordID)
-			return fmt.Errorf("user %s does not exist", discordID)
-		}
-		return fmt.Errorf("failed to get guild member: %w", err)
-	}
-
-	for _, memberRoleID := range member.Roles {
-		if memberRoleID == guildCfg.RoleID {
-			log.Printf("User %s already has role %s, skipping assignment", discordID, guildCfg.RoleID)
-			return nil
-		}
-	}
-
-	log.Printf("User %s does not have role %s, proceeding with assignment", discordID, guildCfg.RoleID)
+	// Assume user exists (they're in our database) and proceed with role assignment
+	log.Printf("Proceeding with role assignment for user %s (assumed to exist)", discordID)
 
 	// Add the role to the user
 	log.Printf("Adding role %s to user %s in guild %s", guildCfg.RoleID, discordID, guildCfg.ID)
-	err = b.session.GuildMemberRoleAdd(guildCfg.ID, discordID, guildCfg.RoleID)
+	err := b.session.GuildMemberRoleAdd(guildCfg.ID, discordID, guildCfg.RoleID)
 	if err != nil {
 		// Provide more detailed error information
 		if strings.Contains(err.Error(), "50001") {
