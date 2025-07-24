@@ -431,28 +431,35 @@ func (b *Bot) getPendingRoleAssignments() ([]string, error) {
 
 	log.Printf("API Response: %s", string(body))
 
-	// Try to parse the response
+	// Try to parse the response with the actual API format
 	var response struct {
-		PendingUsers []string `json:"pending_users"`
-		Count        int      `json:"count"`
-		Timestamp    string   `json:"timestamp"`
+		Success            bool `json:"success"`
+		PendingAssignments []struct {
+			TelegramID     string  `json:"telegram_id"`
+			DiscordID      string  `json:"discord_id"`
+			VerifiedAt     string  `json:"verified_at"`
+			RoleAssignedAt *string `json:"role_assigned_at"`
+		} `json:"pendingAssignments"`
+		Count int `json:"count"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	// Log what we found
-	log.Printf("Parsed response - Count: %d, PendingUsers: %v", response.Count, response.PendingUsers)
+	log.Printf("Parsed response - Success: %v, Count: %d, PendingAssignments: %d", response.Success, response.Count, len(response.PendingAssignments))
 
-	// If we have pending_users, use them
-	if len(response.PendingUsers) > 0 {
-		return response.PendingUsers, nil
+	// Extract Discord IDs from pendingAssignments
+	var discordIDs []string
+	for _, assignment := range response.PendingAssignments {
+		if assignment.RoleAssignedAt == nil { // Only include users who haven't had roles assigned
+			discordIDs = append(discordIDs, assignment.DiscordID)
+			log.Printf("Found pending user: %s (Telegram: %s)", assignment.DiscordID, assignment.TelegramID)
+		}
 	}
 
-	// If we only have count but no pending_users, return empty array
-	// (This means the API returned count but no actual user list)
-	log.Printf("No pending_users found in response, returning empty array")
-	return []string{}, nil
+	log.Printf("Extracted %d Discord IDs for role assignment", len(discordIDs))
+	return discordIDs, nil
 }
 
 // updateRoleAssignmentTimestamp updates the role assignment timestamp in the API
