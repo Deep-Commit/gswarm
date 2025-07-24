@@ -1377,6 +1377,8 @@ func (t *TelegramService) handleTelegramCommand(command string, args string, tel
 		return t.handleVerifyCommand(args, telegramID)
 	case "/help":
 		return t.sendHelpMessage()
+	case "/stats":
+		return t.handleStatsCommand(telegramID)
 	case "/start":
 		// Explicitly ignore /start (no response)
 		return nil
@@ -1391,6 +1393,7 @@ func (t *TelegramService) sendHelpMessage() error {
 
 <b>Available commands:</b>
 <code>/verify &lt;code&gt;</code> - Link your Discord and Telegram accounts
+<code>/stats</code> - Check your current stats and rank data
 <code>/help</code> - Show this help message
 
 <b>Monitoring:</b>
@@ -1402,6 +1405,166 @@ For issues or questions, contact the G-Swarm team in Discord.`
 	return t.sendTelegramMessageHTML(message)
 }
 
+// handleStatsCommand handles the /stats command to show current user stats
+func (t *TelegramService) handleStatsCommand(telegramID string) error {
+	fmt.Printf("Handling stats request for Telegram ID: %s\n", telegramID)
+
+	// Convert chat_id to number for API calls
+	var chatIDNum int64
+	if _, err := fmt.Sscanf(t.Config.ChatID, "%d", &chatIDNum); err != nil {
+		return fmt.Errorf("failed to parse chat ID as number: %w", err)
+	}
+
+	// Check verification status first
+	fmt.Printf("Checking verification status for Telegram ID: %d\n", chatIDNum)
+	verificationStatus, err := t.CheckVerificationStatus(chatIDNum)
+	if err != nil {
+		fmt.Printf("Warning: Could not check verification status: %v\n", err)
+		// Continue without verification data
+		verificationStatus = nil
+	}
+
+	var userRankData *UserRankData
+	if verificationStatus != nil && verificationStatus.IsVerified {
+		fmt.Printf("User is verified!\n")
+
+		// Get rank data for verified user
+		fmt.Printf("Fetching rank data for verified user...\n")
+		userRankData, err = t.GetUserRankData(chatIDNum)
+		if err != nil {
+			fmt.Printf("Warning: Could not get user rank data: %v\n", err)
+			// Continue without rank data
+			userRankData = nil
+		}
+	}
+
+	// Get current blockchain data
+	fmt.Printf("Fetching current blockchain data...\n")
+	var totalVotes *big.Int = big.NewInt(0)
+	var totalRewards *big.Int = big.NewInt(0)
+	var peerData []struct {
+		PeerID  string
+		Votes   *big.Int
+		Rewards *big.Int
+		Rank    *Rank
+	}
+
+	// Check each peer ID
+	for i, peerID := range t.PeerIDs {
+		fmt.Printf("Checking peer ID %d/%d: %s\n", i+1, len(t.PeerIDs), peerID)
+
+		// Query blockchain data for this peer ID
+		blockchainData, err := t.GetBlockchainDataForPeerID(peerID)
+		if err != nil {
+			fmt.Printf("Warning: Could not get blockchain data for peer ID %s: %v\n", peerID, err)
+			continue
+		}
+
+		// Add to totals
+		totalVotes.Add(totalVotes, blockchainData.Votes)
+		totalRewards.Add(totalRewards, blockchainData.Rewards)
+
+		// Find rank data for this peer if available
+		var rankData *Rank
+		if userRankData != nil {
+			for _, rank := range userRankData.Ranks {
+				if rank.PeerID == peerID {
+					rankData = &rank
+					break
+				}
+			}
+		}
+
+		// Store per-peer data
+		peerData = append(peerData, struct {
+			PeerID  string
+			Votes   *big.Int
+			Rewards *big.Int
+			Rank    *Rank
+		}{
+			PeerID:  peerID,
+			Votes:   blockchainData.Votes,
+			Rewards: blockchainData.Rewards,
+			Rank:    rankData,
+		})
+	}
+
+	// Build verification status section
+	var verificationSection strings.Builder
+	if verificationStatus != nil && verificationStatus.IsVerified {
+		verificationSection.WriteString("✅ <b>Verified User</b>\n")
+
+		if userRankData != nil {
+			verificationSection.WriteString(fmt.Sprintf("📊 Total Nodes: %d\n", userRankData.Stats.TotalNodes))
+			verificationSection.WriteString(fmt.Sprintf("🏆 Ranked Nodes: %d\n", userRankData.Stats.RankedNodes))
+		}
+		verificationSection.WriteString("\n")
+	} else {
+		verificationSection.WriteString("❌ <b>Not Verified</b>\n")
+		verificationSection.WriteString("🔗 Get verified in Discord to see rank data!\n")
+		verificationSection.WriteString("💬 Use <code>/link-telegram</code> in the gensyn discord channel\n\n")
+	}
+
+	// Build per-peer breakdown
+	var peerBreakdown strings.Builder
+	for i, data := range peerData {
+		// Truncate the peer ID for better readability
+		peerID := data.PeerID
+		if len(peerID) > 20 {
+			peerID = peerID[:3] + "..." + peerID[len(peerID)-3:]
+		}
+
+		peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
+		peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s\n", data.Votes.String()))
+		peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %d\n",
+			func() int {
+				if data.Rank != nil {
+					return data.Rank.TotalRewards
+				}
+				if data.Rewards != nil {
+					v, _ := new(big.Int).SetString(data.Rewards.String(), 10)
+					return int(v.Int64())
+				}
+				return 0
+			}()))
+
+		// Add rank information if available
+		if data.Rank != nil {
+			peerBreakdown.WriteString(fmt.Sprintf("   🏆 Rank: #%d\n", data.Rank.Rank))
+		}
+		peerBreakdown.WriteString("\n")
+	}
+
+	// Prepare stats message
+	message := fmt.Sprintf(`📊 <b>G-Swarm Stats Report</b>
+
+%s👤 <b>EOA Address:</b> <code>%s</code>
+🔍 <b>Peer IDs Monitored:</b> %d
+
+📈 <b>Total Votes:</b> %s
+💰 <b>Total Rewards:</b> %s
+
+📋 <b>Per-Peer Breakdown:</b>
+%s⏰ <b>Last Updated:</b> %s
+
+💡 <i>Stats are fetched in real-time. Use this command anytime to check your current status!</i>`,
+		verificationSection.String(),
+		t.UserEOAAddress,
+		len(t.PeerIDs),
+		totalVotes.String(),
+		totalRewards.String(),
+		peerBreakdown.String(),
+		time.Now().Format("2006-01-02 15:04:05"))
+
+	// Send stats message
+	if err := t.sendTelegramMessageHTML(message); err != nil {
+		return fmt.Errorf("failed to send stats message: %w", err)
+	}
+
+	fmt.Printf("Stats message sent successfully!\n")
+	return nil
+}
+
 // sendUnknownCommandMessage sends a message for unknown commands
 func (t *TelegramService) sendUnknownCommandMessage() error {
 	message := `❓ <b>Unknown Command</b>
@@ -1410,7 +1573,8 @@ Use <code>/help</code> to see available commands.
 
 <b>Quick start:</b>
 <code>/link-telegram</code> in Discord to get a code
-<code>/verify &lt;code&gt;</code> here in Telegram to link accounts`
+<code>/verify &lt;code&gt;</code> here in Telegram to link accounts
+<code>/stats</code> to check your current stats`
 
 	return t.sendTelegramMessageHTML(message)
 }

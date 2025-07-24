@@ -15,9 +15,10 @@ A dedicated Go-based Telegram monitoring service for Gensyn AI that provides rea
 - 📈 **Change Detection**: Only notified when values actually change
 - 🛡️ **Secure Configuration**: Local config file storage
 - 🔍 **Peer ID Monitoring**: Track all peer IDs associated with your EOA address
-- ⏰ **Continuous Monitoring**: Checks every 5 minutes for changes
+- ⏰ **Continuous Monitoring**: Checks every hour for changes
 - 🤖 **Discord Integration**: Optional verification system with role assignment
 - 🔐 **Secure Verification**: Time-limited codes for Discord community access
+- 📋 **On-demand Stats**: Use `/stats` command to check current data anytime
 
 ## 🔐 Discord Verification (Optional)
 
@@ -38,6 +39,16 @@ The Discord verification system allows you to:
 3. **Join the Discord server**: [https://discord.gg/gswarm](https://discord.gg/gswarm)
 4. **Use the verification command**: `/verify <code>` in Discord
 5. **Get automatically assigned** the "GSwarm" role
+
+### Telegram Bot Commands
+
+The G-Swarm Telegram bot supports several commands:
+
+- **`/stats`** - Check your current stats and rank data on demand
+- **`/verify <code>`** - Link your Discord and Telegram accounts
+- **`/help`** - Show available commands and basic information
+
+For detailed command documentation, see [Telegram Bot Commands](docs/telegram-bot-commands.md).
 
 ### Verification Features
 
