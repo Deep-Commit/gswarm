@@ -297,14 +297,14 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 
 	log.Printf("Starting role assignment process for user %s with role ID %s", discordID, guildCfg.RoleID)
 
-	// Check if the configured role exists
-	role, err := b.session.State.Role(guildCfg.ID, guildCfg.RoleID)
-	if err != nil || role == nil {
-		log.Printf("Role %s not found in guild %s - role must be created manually by server admin", guildCfg.RoleID, guildCfg.ID)
-		return fmt.Errorf("configured role %s does not exist in guild %s - please create the role manually", guildCfg.RoleID, guildCfg.ID)
-	}
+	// // Check if the configured role exists
+	// role, err := b.session.State.Role(guildCfg.ID, guildCfg.RoleID)
+	// if err != nil || role == nil {
+	// 	log.Printf("Role %s not found in guild %s - role must be created manually by server admin", guildCfg.RoleID, guildCfg.ID)
+	// 	return fmt.Errorf("configured role %s does not exist in guild %s - please create the role manually", guildCfg.RoleID, guildCfg.ID)
+	// }
 
-	log.Printf("Found configured role: %s (%s)", role.Name, role.ID)
+	// log.Printf("Found configured role: %s (%s)", role.Name, role.ID)
 
 	// Double-check if user already has the role before assigning
 	member, err := b.session.GuildMember(guildCfg.ID, discordID)
