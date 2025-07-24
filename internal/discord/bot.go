@@ -436,7 +436,7 @@ func (b *Bot) getPendingRoleAssignments() ([]string, error) {
 		Success            bool `json:"success"`
 		PendingAssignments []struct {
 			TelegramID     interface{} `json:"telegram_id"` // Can be number or string
-			DiscordID      string      `json:"discord_id"`
+			DiscordID      interface{} `json:"discord_id"`  // Can be number or string
 			VerifiedAt     string      `json:"verified_at"`
 			RoleAssignedAt *string     `json:"role_assigned_at"`
 		} `json:"pendingAssignments"`
@@ -453,8 +453,10 @@ func (b *Bot) getPendingRoleAssignments() ([]string, error) {
 	var discordIDs []string
 	for _, assignment := range response.PendingAssignments {
 		if assignment.RoleAssignedAt == nil { // Only include users who haven't had roles assigned
-			discordIDs = append(discordIDs, assignment.DiscordID)
-			log.Printf("Found pending user: %s (Telegram: %v)", assignment.DiscordID, assignment.TelegramID)
+			// Convert DiscordID to string
+			discordIDStr := fmt.Sprintf("%v", assignment.DiscordID)
+			discordIDs = append(discordIDs, discordIDStr)
+			log.Printf("Found pending user: %s (Telegram: %v)", discordIDStr, assignment.TelegramID)
 		}
 	}
 
