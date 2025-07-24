@@ -423,14 +423,36 @@ func (b *Bot) getPendingRoleAssignments() ([]string, error) {
 		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
 	}
 
+	// Read the response body for debugging
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	log.Printf("API Response: %s", string(body))
+
+	// Try to parse the response
 	var response struct {
 		PendingUsers []string `json:"pending_users"`
+		Count        int      `json:"count"`
+		Timestamp    string   `json:"timestamp"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return response.PendingUsers, nil
+	// Log what we found
+	log.Printf("Parsed response - Count: %d, PendingUsers: %v", response.Count, response.PendingUsers)
+
+	// If we have pending_users, use them
+	if len(response.PendingUsers) > 0 {
+		return response.PendingUsers, nil
+	}
+
+	// If we only have count but no pending_users, return empty array
+	// (This means the API returned count but no actual user list)
+	log.Printf("No pending_users found in response, returning empty array")
+	return []string{}, nil
 }
 
 // updateRoleAssignmentTimestamp updates the role assignment timestamp in the API
