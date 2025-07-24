@@ -310,6 +310,15 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 	member, err := b.session.GuildMember(guildCfg.ID, discordID)
 	if err != nil {
 		log.Printf("Failed to get guild member for user %s: %v", discordID, err)
+		// Check if it's a "user not in guild" error
+		if strings.Contains(err.Error(), "10007") || strings.Contains(err.Error(), "Unknown Member") {
+			log.Printf("User %s is not a member of guild %s, skipping role assignment", discordID, guildCfg.ID)
+			return fmt.Errorf("user %s is not a member of guild %s", discordID, guildCfg.ID)
+		}
+		if strings.Contains(err.Error(), "10013") || strings.Contains(err.Error(), "Unknown User") {
+			log.Printf("User %s does not exist, skipping role assignment", discordID)
+			return fmt.Errorf("user %s does not exist", discordID)
+		}
 		return fmt.Errorf("failed to get guild member: %w", err)
 	}
 
