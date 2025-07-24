@@ -29,10 +29,11 @@ type Config struct {
 
 // Bot represents the Discord bot instance
 type Bot struct {
-	config  *Config
-	session *discordgo.Session
-	ctx     context.Context
-	cancel  context.CancelFunc
+	config     *Config
+	session    *discordgo.Session
+	ctx        context.Context
+	cancel     context.CancelFunc
+	httpClient *http.Client
 }
 
 // Helper to get GuildConfig by guild ID
@@ -59,16 +60,25 @@ func NewBot(config *Config) (*Bot, error) {
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Create HTTP client for API calls
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
 	bot := &Bot{
-		config:  config,
-		session: session,
-		ctx:     ctx,
-		cancel:  cancel,
+		config:     config,
+		session:    session,
+		ctx:        ctx,
+		cancel:     cancel,
+		httpClient: httpClient,
 	}
 
 	// Set up event handlers
 	session.AddHandler(bot.handleReady)
 	session.AddHandler(bot.handleInteractionCreate)
+
+	// Start role assignment checker
+	go bot.startRoleAssignmentChecker()
 
 	return bot, nil
 }
@@ -183,30 +193,8 @@ func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.Inter
 		return
 	}
 
-	// Check if user already has the role
-	hasRole := false
-	log.Printf("Checking roles for user %s in guild %s", discordID, guildID)
-	log.Printf("User roles: %v", i.Member.Roles)
-	log.Printf("Target role ID: %s", guildCfg.RoleID)
-
-	for _, roleID := range i.Member.Roles {
-		if roleID == guildCfg.RoleID {
-			hasRole = true
-			log.Printf("User already has role %s", roleID)
-			break
-		}
-	}
-
-	// Assign the role if they don't have it already
-	if !hasRole {
-		log.Printf("User does not have role %s, attempting to assign", guildCfg.RoleID)
-		if err := b.assignGSwarmRole(discordID, guildCfg); err != nil {
-			log.Printf("Failed to assign role to user %s: %v", discordID, err)
-			// Continue with the linking process even if role assignment fails
-		}
-	} else {
-		log.Printf("User already has role %s, skipping assignment", guildCfg.RoleID)
-	}
+	// Note: Role will be assigned after successful Telegram verification
+	log.Printf("User %s will receive role after completing Telegram verification", discordID)
 
 	// Issue a linking code via the API
 	code, err := b.issueLinkingCode(discordID)
@@ -222,11 +210,13 @@ func (b *Bot) handleLinkTelegramCommand(s *discordgo.Session, i *discordgo.Inter
 		"**Instructions:**\n"+
 		"1. Open your Telegram bot\n"+
 		"2. Send `/verify %s`\n"+
-		"3. Your accounts will be linked automatically\n\n"+
+		"3. Your accounts will be linked automatically\n"+
+		"4. You'll receive your GSwarm role automatically\n\n"+
 		"⚠️ **Important:**\n"+
 		"• This code expires in 10 minutes\n"+
 		"• Keep it private and don't share it\n"+
-		"• Each code can only be used once", code, code)
+		"• Each code can only be used once\n"+
+		"• Role assignment happens after Telegram verification", code, code)
 
 	b.respondToInteraction(s, i, message, true)
 }
@@ -330,6 +320,8 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 		}
 	}
 
+	log.Printf("User %s does not have role %s, proceeding with assignment", discordID, guildCfg.RoleID)
+
 	// Add the role to the user
 	log.Printf("Adding role %s to user %s in guild %s", guildCfg.RoleID, discordID, guildCfg.ID)
 	err = b.session.GuildMemberRoleAdd(guildCfg.ID, discordID, guildCfg.RoleID)
@@ -345,5 +337,160 @@ func (b *Bot) assignGSwarmRole(discordID string, guildCfg *GuildConfig) error {
 	}
 
 	log.Printf("Successfully assigned GSwarm role to user %s in guild %s", discordID, guildCfg.ID)
+
+	// Update role assignment timestamp in API
+	if err := b.updateRoleAssignmentTimestamp(discordID, true); err != nil {
+		log.Printf("Warning: Failed to update role assignment timestamp for user %s: %v", discordID, err)
+		// Don't return error here as role was successfully assigned
+	}
+
+	return nil
+}
+
+// startRoleAssignmentChecker periodically checks for pending role assignments
+func (b *Bot) startRoleAssignmentChecker() {
+	ticker := time.NewTicker(15 * time.Second) // Check every 15 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			b.checkPendingRoleAssignments()
+		case <-b.ctx.Done():
+			return
+		}
+	}
+}
+
+// checkPendingRoleAssignments checks for users who need role assignment
+func (b *Bot) checkPendingRoleAssignments() {
+	// Get pending role assignments from API
+	pendingUsers, err := b.getPendingRoleAssignments()
+	if err != nil {
+		log.Printf("Failed to get pending role assignments: %v", err)
+		return
+	}
+
+	if len(pendingUsers) == 0 {
+		return // No pending assignments
+	}
+
+	log.Printf("Found %d pending role assignments", len(pendingUsers))
+
+	// Assign roles to each pending user
+	for _, discordID := range pendingUsers {
+		log.Printf("Processing pending role assignment for user %s", discordID)
+
+		// Find which guild this user belongs to
+		for _, guildCfg := range b.config.Guilds {
+			log.Printf("Attempting to assign role %s to user %s in guild %s", guildCfg.RoleID, discordID, guildCfg.ID)
+
+			// Try to assign role in this guild
+			if err := b.assignGSwarmRole(discordID, &guildCfg); err != nil {
+				log.Printf("Failed to assign role to user %s in guild %s: %v", discordID, guildCfg.ID, err)
+
+				// Update role assignment timestamp with failure
+				if updateErr := b.updateRoleAssignmentTimestamp(discordID, false); updateErr != nil {
+					log.Printf("Warning: Failed to update role assignment timestamp for failed assignment user %s: %v", discordID, updateErr)
+				}
+
+				// Continue with other users
+			} else {
+				log.Printf("Successfully assigned role to user %s in guild %s", discordID, guildCfg.ID)
+				break // Role assigned successfully, move to next user
+			}
+		}
+	}
+}
+
+// getPendingRoleAssignments fetches pending role assignments from the API
+func (b *Bot) getPendingRoleAssignments() ([]string, error) {
+	url := fmt.Sprintf("%s/telegrams/pending-role-assignments", b.config.APIURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+b.config.APISecret)
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
+	}
+
+	var response struct {
+		PendingUsers []string `json:"pending_users"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return response.PendingUsers, nil
+}
+
+// updateRoleAssignmentTimestamp updates the role assignment timestamp in the API
+func (b *Bot) updateRoleAssignmentTimestamp(discordID string, success bool) error {
+	// Create the request payload
+	request := map[string]interface{}{
+		"discord_id": discordID,
+		"success":    success,
+	}
+
+	// Convert to JSON
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request
+	url := fmt.Sprintf("%s/telegrams/update-role-assignment", b.config.APIURL)
+	log.Printf("Updating role assignment timestamp for user %s: %s", discordID, url)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+b.config.APISecret)
+
+	// Make the request
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var apiResp struct {
+		Success bool   `json:"success"`
+		Message string `json:"message,omitempty"`
+		Error   string `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	if !apiResp.Success {
+		return fmt.Errorf("API returned error: %s", apiResp.Error)
+	}
+
+	log.Printf("Successfully updated role assignment timestamp for user %s: %s", discordID, apiResp.Message)
 	return nil
 }

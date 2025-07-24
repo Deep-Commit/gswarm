@@ -55,20 +55,22 @@ type VerifyCodeResponse struct {
 
 // API represents the API server for account linking
 type API struct {
-	apiKey     string
-	codes      map[string]*LinkCode
-	accounts   map[string]*LinkedAccount // Key: discord_id
-	mu         sync.RWMutex
-	codeExpiry time.Duration
+	apiKey       string
+	codes        map[string]*LinkCode
+	accounts     map[string]*LinkedAccount // Key: discord_id
+	pendingRoles map[string]bool           // Key: discord_id, tracks users who need role assignment
+	mu           sync.RWMutex
+	codeExpiry   time.Duration
 }
 
 // NewAPI creates a new API instance
 func NewAPI(apiKey string) *API {
 	return &API{
-		apiKey:     apiKey,
-		codes:      make(map[string]*LinkCode),
-		accounts:   make(map[string]*LinkedAccount),
-		codeExpiry: 10 * time.Minute, // Codes expire after 10 minutes
+		apiKey:       apiKey,
+		codes:        make(map[string]*LinkCode),
+		accounts:     make(map[string]*LinkedAccount),
+		pendingRoles: make(map[string]bool),
+		codeExpiry:   10 * time.Minute, // Codes expire after 10 minutes
 	}
 }
 
@@ -78,6 +80,7 @@ func (api *API) Start(addr string) error {
 	http.HandleFunc("/api/telegrams/issue-code", api.handleIssueCode)
 	http.HandleFunc("/api/telegrams/verify-code", api.handleVerifyCode)
 	http.HandleFunc("/api/telegrams/linked-accounts", api.handleGetLinkedAccounts)
+	http.HandleFunc("/api/telegrams/pending-role-assignments", api.handleGetPendingRoleAssignments)
 
 	// Start cleanup goroutine
 	go api.cleanupExpiredCodes()
@@ -273,7 +276,50 @@ func (api *API) verifyCode(code, telegramID string) (bool, string) {
 	api.accounts[linkCode.DiscordID] = linkedAccount
 
 	log.Printf("Successfully linked Discord ID %s with Telegram ID %s", linkCode.DiscordID, telegramID)
+
+	// Trigger Discord role assignment
+	go api.triggerDiscordRoleAssignment(linkCode.DiscordID)
+
 	return true, "Account successfully linked"
+}
+
+// triggerDiscordRoleAssignment triggers role assignment for a Discord user
+func (api *API) triggerDiscordRoleAssignment(discordID string) {
+	api.mu.Lock()
+	api.pendingRoles[discordID] = true
+	api.mu.Unlock()
+
+	log.Printf("Added Discord user %s to pending role assignments", discordID)
+}
+
+// handleGetPendingRoleAssignments handles getting pending role assignments
+func (api *API) handleGetPendingRoleAssignments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Verify API key
+	if !api.verifyAPIKey(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	api.mu.Lock()
+	pendingUsers := make([]string, 0, len(api.pendingRoles))
+	for discordID := range api.pendingRoles {
+		pendingUsers = append(pendingUsers, discordID)
+		delete(api.pendingRoles, discordID) // Remove from pending after returning
+	}
+	api.mu.Unlock()
+
+	response := struct {
+		PendingUsers []string `json:"pending_users"`
+	}{
+		PendingUsers: pendingUsers,
+	}
+
+	api.sendJSONResponse(w, response)
 }
 
 // cleanupExpiredCodes removes expired codes periodically
