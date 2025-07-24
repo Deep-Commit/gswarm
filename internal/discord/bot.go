@@ -398,7 +398,7 @@ func (b *Bot) getPendingRoleAssignments() ([]string, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+b.config.APISecret)
+	req.Header.Set("x-api-key", b.config.APISecret)
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
@@ -486,7 +486,7 @@ func (b *Bot) updateRoleAssignmentTimestamp(discordID string, success bool) erro
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+b.config.APISecret)
+	req.Header.Set("x-api-key", b.config.APISecret)
 
 	// Make the request
 	resp, err := b.httpClient.Do(req)
