@@ -322,7 +322,7 @@ func (t *TelegramService) Run() error {
 	go t.startMessagePolling()
 
 	// Start the monitoring loop
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
 
 	// Set up signal handling for graceful shutdown
