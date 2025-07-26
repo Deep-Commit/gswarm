@@ -62,7 +62,7 @@ func NewBot(config *Config) (*Bot, error) {
 
 	// Create HTTP client for API calls
 	httpClient := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: 30 * time.Second, // Match the timeout used in API calls
 	}
 
 	bot := &Bot{
