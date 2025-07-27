@@ -131,6 +131,84 @@ The service will:
 - Start monitoring blockchain activity every 5 minutes
 - Send notifications only when changes are detected
 
+### Non-Interactive Mode (Containerized Environments)
+
+For automated deployments and containerized environments, you can run gswarm in non-interactive mode by providing all required configuration via command line flags or environment variables:
+
+```bash
+# Using command line flags with config file
+gswarm --telegram-config-path /gswarm/config-wallet1.json --eoa-address 0x1234567890abcdef...
+
+# Completely non-interactive mode (no config file needed)
+gswarm --telegram-bot-token 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz --telegram-chat-id 123456789 --eoa-address 0x1234567890abcdef...
+
+# Using environment variables
+export GSWARM_TELEGRAM_CONFIG_PATH=/gswarm/config-wallet1.json
+export GSWARM_EOA_ADDRESS=0x1234567890abcdef...
+gswarm
+
+# Completely non-interactive with environment variables
+export GSWARM_TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+export GSWARM_TELEGRAM_CHAT_ID=123456789
+export GSWARM_EOA_ADDRESS=0x1234567890abcdef...
+gswarm
+```
+
+#### Config File Format
+
+The Telegram config file must use snake_case field names:
+
+```json
+{
+  "bot_token": "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz",
+  "chat_id": "123456789",
+  "welcome_sent": false,
+  "api_url": "https://gswarm.dev/api"
+}
+```
+
+**Important:** The JSON field names must be `bot_token` and `chat_id` (snake_case), not `botToken` and `chatID` (camelCase).
+
+#### Docker Example
+
+**Option 1: Using config file**
+```dockerfile
+FROM golang:1.24-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o gswarm ./cmd/gswarm
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/gswarm .
+COPY config-wallet1.json /gswarm/
+
+ENV GSWARM_TELEGRAM_CONFIG_PATH=/gswarm/config-wallet1.json
+ENV GSWARM_EOA_ADDRESS=0x1234567890abcdef...
+
+CMD ["./gswarm"]
+```
+
+**Option 2: Completely non-interactive (no config file)**
+```dockerfile
+FROM golang:1.24-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o gswarm ./cmd/gswarm
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/gswarm .
+
+ENV GSWARM_TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+ENV GSWARM_TELEGRAM_CHAT_ID=123456789
+ENV GSWARM_EOA_ADDRESS=0x1234567890abcdef...
+
+CMD ["./gswarm"]
+```
+
 ## 📖 Usage
 
 ### Interactive Setup (Default)
@@ -152,6 +230,9 @@ You'll be prompted for:
 |------|-------------|---------|---------------------|
 | `--telegram-config-path` | Path to telegram-config.json file | `telegram-config.json` | `GSWARM_TELEGRAM_CONFIG_PATH` |
 | `--update-telegram-config` | Force update of Telegram config via CLI prompts | `false` | `GSWARM_UPDATE_TELEGRAM_CONFIG` |
+| `--eoa-address` | EOA address for monitoring (non-interactive mode) | (prompted) | `GSWARM_EOA_ADDRESS` |
+| `--telegram-bot-token` | Telegram bot token (non-interactive mode) | (from config) | `GSWARM_TELEGRAM_BOT_TOKEN` |
+| `--telegram-chat-id` | Telegram chat ID (non-interactive mode) | (from config) | `GSWARM_TELEGRAM_CHAT_ID` |
 
 ### Environment Variables
 
@@ -174,6 +255,12 @@ gswarm --telegram-config-path /path/to/config.json
 
 # Force update Telegram config
 gswarm --update-telegram-config
+
+# Non-interactive mode with EOA address
+gswarm --telegram-config-path /path/to/config.json --eoa-address 0x1234567890abcdef...
+
+# Completely non-interactive mode (no config file needed)
+gswarm --telegram-bot-token YOUR_TOKEN --telegram-chat-id 123456789 --eoa-address 0x1234567890abcdef...
 
 # Show version
 gswarm version

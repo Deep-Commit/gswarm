@@ -6,7 +6,7 @@ import (
 
 func TestHandleStatsCommand(t *testing.T) {
 	// Create a new TelegramService instance
-	service := NewTelegramService("test-config.json", false)
+	service := NewTelegramService("test-config.json", false, "", "", "")
 
 	// Test that the function exists and can be called
 	// This is a basic test to ensure the function signature is correct

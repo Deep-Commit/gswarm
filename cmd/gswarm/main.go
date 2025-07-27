@@ -70,6 +70,21 @@ func getAppFlags() []cli.Flag {
 			Usage:   "Force update of Telegram config via CLI prompts",
 			EnvVars: []string{"GSWARM_UPDATE_TELEGRAM_CONFIG"},
 		},
+		&cli.StringFlag{
+			Name:    "eoa-address",
+			Usage:   "EOA address for monitoring (for non-interactive mode)",
+			EnvVars: []string{"GSWARM_EOA_ADDRESS"},
+		},
+		&cli.StringFlag{
+			Name:    "telegram-bot-token",
+			Usage:   "Telegram bot token (for non-interactive mode)",
+			EnvVars: []string{"GSWARM_TELEGRAM_BOT_TOKEN"},
+		},
+		&cli.StringFlag{
+			Name:    "telegram-chat-id",
+			Usage:   "Telegram chat ID (for non-interactive mode)",
+			EnvVars: []string{"GSWARM_TELEGRAM_CHAT_ID"},
+		},
 	}
 }
 
@@ -149,12 +164,20 @@ EXAMPLES:
    # Force update Telegram config
    gswarm --update-telegram-config
 
+   # Non-interactive mode with EOA address
+   gswarm --telegram-config-path /path/to/config.json --eoa-address 0x1234...
+
+   # Completely non-interactive mode (no config file needed)
+   gswarm --telegram-bot-token YOUR_TOKEN --telegram-chat-id 123456789 --eoa-address 0x1234...
+
    # Show version
    gswarm version
 
 ENVIRONMENT VARIABLES:
    All flags can be set via environment variables with the GSWARM_ prefix.
    For example: GSWARM_TELEGRAM_CONFIG_PATH=/path/to/config.json
+   For non-interactive mode: GSWARM_EOA_ADDRESS=0x1234...
+   For completely non-interactive mode: GSWARM_TELEGRAM_BOT_TOKEN=YOUR_TOKEN GSWARM_TELEGRAM_CHAT_ID=123456789
 
 LEARN MORE:
    • GitHub: https://github.com/Deep-Commit/gswarm
@@ -166,8 +189,11 @@ LEARN MORE:
 func runTelegramService(c *cli.Context) error {
 	telegramConfigPath := c.String("telegram-config-path")
 	updateTelegramConfig := c.Bool("update-telegram-config")
+	eoaAddress := c.String("eoa-address")
+	botToken := c.String("telegram-bot-token")
+	chatID := c.String("telegram-chat-id")
 
-	telegramService := telegram.NewTelegramService(telegramConfigPath, updateTelegramConfig)
+	telegramService := telegram.NewTelegramService(telegramConfigPath, updateTelegramConfig, eoaAddress, botToken, chatID)
 	return telegramService.Run()
 }
 
@@ -175,8 +201,11 @@ func getVerifyAction() func(c *cli.Context) error {
 	return func(c *cli.Context) error {
 		telegramConfigPath := c.String("telegram-config-path")
 		updateTelegramConfig := c.Bool("update-telegram-config")
+		eoaAddress := c.String("eoa-address")
+		botToken := c.String("telegram-bot-token")
+		chatID := c.String("telegram-chat-id")
 
-		telegramService := telegram.NewTelegramService(telegramConfigPath, updateTelegramConfig)
+		telegramService := telegram.NewTelegramService(telegramConfigPath, updateTelegramConfig, eoaAddress, botToken, chatID)
 
 		// Ensure config is loaded
 		if err := telegramService.EnsureTelegramConfig(); err != nil {
