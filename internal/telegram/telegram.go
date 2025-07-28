@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -84,6 +85,7 @@ type TelegramService struct {
 	PeerIDs           []string
 	PreviousData      *PreviousData
 	StopChan          chan bool
+	messageMutex      sync.Mutex // Protect message building
 }
 
 // NewTelegramService creates a new telegram service instance
@@ -538,6 +540,7 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		}
 
 		// Build verification status section
+		t.messageMutex.Lock()
 		var verificationSection strings.Builder
 		if verificationStatus != nil && verificationStatus.IsVerified {
 			verificationSection.WriteString("✅ <b>Verified User</b>\n")
@@ -552,6 +555,7 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 			verificationSection.WriteString("🔗 Get verified in Discord to see rank data!\n")
 			verificationSection.WriteString("💬 Use <code>/link-telegram</code> in the gensyn discord channel\n\n")
 		}
+		t.messageMutex.Unlock()
 
 		// Prepare notification message
 		message := fmt.Sprintf(`🚀 <b>G-Swarm Update</b>
@@ -1536,6 +1540,7 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 	}
 
 	// Build per-peer breakdown with delta calculations
+	t.messageMutex.Lock()
 	var peerBreakdown strings.Builder
 	if previousData.Peers == nil {
 		previousData.Peers = make(map[string]PeerPreviousData)
@@ -1572,6 +1577,7 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 		}
 		peerBreakdown.WriteString("\n")
 	}
+	t.messageMutex.Unlock()
 
 	// Prepare stats message
 	message := fmt.Sprintf(`📊 <b>G-Swarm Stats Report</b>
