@@ -522,29 +522,13 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 				prevRewards.SetString(prevPeer.Rewards, 10)
 			}
 
-			// Compute deltas
+			// Compute deltas - ALWAYS use Alchemy API data for blockchain calculations
 			votesDelta := getChangeIndicator(prevVotes, data.Votes)
-			rewardsBig := new(big.Int)
-			if data.Rank != nil {
-				rewardsBig.SetInt64(int64(data.Rank.TotalRewards))
-			} else if data.Rewards != nil {
-				rewardsBig.SetString(data.Rewards.String(), 10)
-			}
-			rewardsDelta := getChangeIndicator(prevRewards, rewardsBig)
+			rewardsDelta := getChangeIndicator(prevRewards, data.Rewards)
 
 			peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
 			peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s %s\n", data.Votes.String(), votesDelta))
-			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %d %s\n",
-				func() int {
-					if data.Rank != nil {
-						return data.Rank.TotalRewards
-					}
-					if data.Rewards != nil {
-						v, _ := new(big.Int).SetString(data.Rewards.String(), 10)
-						return int(v.Int64())
-					}
-					return 0
-				}(), rewardsDelta))
+			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s %s\n", data.Rewards.String(), rewardsDelta))
 
 			// Add rank information if available
 			if data.Rank != nil {
@@ -602,16 +586,11 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		previousData.Rewards = totalRewards
 		previousData.LastCheck = time.Now()
 
-		// Update per-peer previous data
+		// Update per-peer previous data - ALWAYS use Alchemy API data
 		for _, data := range peerData {
 			peerID := data.PeerID
 			votesStr := data.Votes.String()
-			rewardsStr := "0"
-			if data.Rank != nil {
-				rewardsStr = fmt.Sprintf("%d", data.Rank.TotalRewards)
-			} else if data.Rewards != nil {
-				rewardsStr = data.Rewards.String()
-			}
+			rewardsStr := data.Rewards.String() // Always use blockchain rewards from Alchemy
 			previousData.Peers[peerID] = PeerPreviousData{
 				Votes:   votesStr,
 				Rewards: rewardsStr,
@@ -1579,29 +1558,13 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 			prevRewards.SetString(prevPeer.Rewards, 10)
 		}
 
-		// Compute deltas
+		// Compute deltas - ALWAYS use Alchemy API data for blockchain calculations
 		votesDelta := getChangeIndicator(prevVotes, data.Votes)
-		rewardsBig := new(big.Int)
-		if data.Rank != nil {
-			rewardsBig.SetInt64(int64(data.Rank.TotalRewards))
-		} else if data.Rewards != nil {
-			rewardsBig.SetString(data.Rewards.String(), 10)
-		}
-		rewardsDelta := getChangeIndicator(prevRewards, rewardsBig)
+		rewardsDelta := getChangeIndicator(prevRewards, data.Rewards)
 
 		peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
 		peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s %s\n", data.Votes.String(), votesDelta))
-		peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %d %s\n",
-			func() int {
-				if data.Rank != nil {
-					return data.Rank.TotalRewards
-				}
-				if data.Rewards != nil {
-					v, _ := new(big.Int).SetString(data.Rewards.String(), 10)
-					return int(v.Int64())
-				}
-				return 0
-			}(), rewardsDelta))
+		peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s %s\n", data.Rewards.String(), rewardsDelta))
 
 		// Add rank information if available
 		if data.Rank != nil {

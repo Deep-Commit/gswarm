@@ -5,7 +5,6 @@ go 1.24.0
 require (
 	github.com/bwmarrin/discordgo v0.28.1
 	github.com/ethereum/go-ethereum v1.15.11
-	github.com/google/uuid v1.6.0
 	github.com/urfave/cli/v2 v2.27.5
 	go.uber.org/zap v1.27.0
 	gopkg.in/yaml.v3 v3.0.1 // for YAML config loading
