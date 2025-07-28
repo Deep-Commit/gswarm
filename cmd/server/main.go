@@ -68,7 +68,7 @@ func main() {
 		APIURL:   *apiURL,
 	}
 
-	telegramService := telegram.NewTelegramService("", false)
+	telegramService := telegram.NewTelegramService("", false, "", "", "")
 	telegramService.Config = telegramConfig
 
 	// Start API server in a goroutine

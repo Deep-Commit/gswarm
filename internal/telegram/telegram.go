@@ -78,16 +78,22 @@ type TelegramService struct {
 	ForceConfigUpdate bool
 	Config            *TelegramConfig
 	UserEOAAddress    string
+	EOAAddress        string // For non-interactive mode
+	BotToken          string // For non-interactive mode
+	ChatID            string // For non-interactive mode
 	PeerIDs           []string
 	PreviousData      *PreviousData
 	StopChan          chan bool
 }
 
 // NewTelegramService creates a new telegram service instance
-func NewTelegramService(configPath string, forceUpdate bool) *TelegramService {
+func NewTelegramService(configPath string, forceUpdate bool, eoaAddress string, botToken string, chatID string) *TelegramService {
 	return &TelegramService{
 		ConfigPath:        configPath,
 		ForceConfigUpdate: forceUpdate,
+		EOAAddress:        eoaAddress,
+		BotToken:          botToken,
+		ChatID:            chatID,
 		PreviousData:      &PreviousData{Votes: big.NewInt(0), Rewards: big.NewInt(0), Peers: make(map[string]PeerPreviousData)},
 		StopChan:          make(chan bool),
 	}
@@ -135,23 +141,44 @@ func saveTelegramConfig(path string, cfg *TelegramConfig) error {
 func loadTelegramConfig(path string) (*TelegramConfig, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open config file %q: %w", path, err)
 	}
 	defer f.Close()
 	var cfg TelegramConfig
 	dec := json.NewDecoder(f)
 	if err := dec.Decode(&cfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse config file %q: %w (expected JSON with fields: bot_token, chat_id, welcome_sent, api_url)", path, err)
 	}
+
+	// Validate required fields
+	if cfg.BotToken == "" {
+		return nil, fmt.Errorf("config file %q is missing required field 'bot_token'", path)
+	}
+	if cfg.ChatID == "" {
+		return nil, fmt.Errorf("config file %q is missing required field 'chat_id'", path)
+	}
+
 	return &cfg, nil
 }
 
 // EnsureTelegramConfig loads or prompts for config
 func (t *TelegramService) EnsureTelegramConfig() error {
+	// Check if we have bot token and chat ID from command line
+	if t.BotToken != "" && t.ChatID != "" {
+		t.Config = &TelegramConfig{
+			BotToken:    t.BotToken,
+			ChatID:      t.ChatID,
+			WelcomeSent: false,
+			APIURL:      defaultAPIURL,
+		}
+		return nil
+	}
+
 	cfgPath := t.ConfigPath
 	if cfgPath == "" {
 		cfgPath = DefaultConfigPath
 	}
+
 	if t.ForceConfigUpdate {
 		fmt.Println("Forcing Telegram config update...")
 		cfg, err := promptForTelegramConfig()
@@ -177,6 +204,7 @@ func (t *TelegramService) EnsureTelegramConfig() error {
 		t.Config = cfg
 		return nil
 	}
+
 	fmt.Println("No Telegram config found. Let's set it up.")
 	cfg, err = promptForTelegramConfig()
 	if err != nil {
@@ -263,11 +291,18 @@ func (t *TelegramService) Run() error {
 		fmt.Println("Welcome message already sent previously.")
 	}
 
-	// Prompt for EOA address
-	fmt.Println("Please provide your EOA address to start monitoring...")
-	eoaAddress, err := promptForEOAAddress()
-	if err != nil {
-		return fmt.Errorf("failed to get EOA address: %w", err)
+	// Get EOA address from command line or prompt user
+	var eoaAddress string
+	if t.EOAAddress != "" {
+		eoaAddress = t.EOAAddress
+		fmt.Printf("Using EOA address from command line: %s\n", eoaAddress)
+	} else {
+		fmt.Println("Please provide your EOA address to start monitoring...")
+		var err error
+		eoaAddress, err = promptForEOAAddress()
+		if err != nil {
+			return fmt.Errorf("failed to get EOA address: %w", err)
+		}
 	}
 	t.UserEOAAddress = eoaAddress
 
@@ -478,34 +513,22 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 
 			// Get previous values for this peer (if any)
 			prevPeer := previousData.Peers[data.PeerID]
-			prevVotes := new(big.Int)
-			prevVotes.SetString(prevPeer.Votes, 10)
-			prevRewards := new(big.Int)
-			prevRewards.SetString(prevPeer.Rewards, 10)
-
-			// Compute deltas
-			votesDelta := getChangeIndicator(prevVotes, data.Votes)
-			rewardsBig := new(big.Int)
-			if data.Rank != nil {
-				rewardsBig.SetInt64(int64(data.Rank.TotalRewards))
-			} else if data.Rewards != nil {
-				rewardsBig.SetString(data.Rewards.String(), 10)
+			prevVotes := new(big.Int) // Defaults to 0
+			if prevPeer.Votes != "" {
+				prevVotes.SetString(prevPeer.Votes, 10)
 			}
-			rewardsDelta := getChangeIndicator(prevRewards, rewardsBig)
+			prevRewards := new(big.Int) // Defaults to 0
+			if prevPeer.Rewards != "" {
+				prevRewards.SetString(prevPeer.Rewards, 10)
+			}
+
+			// Compute deltas - ALWAYS use Alchemy API data for blockchain calculations
+			votesDelta := getChangeIndicator(prevVotes, data.Votes)
+			rewardsDelta := getChangeIndicator(prevRewards, data.Rewards)
 
 			peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
 			peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s %s\n", data.Votes.String(), votesDelta))
-			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %d %s\n",
-				func() int {
-					if data.Rank != nil {
-						return data.Rank.TotalRewards
-					}
-					if data.Rewards != nil {
-						v, _ := new(big.Int).SetString(data.Rewards.String(), 10)
-						return int(v.Int64())
-					}
-					return 0
-				}(), rewardsDelta))
+			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s %s\n", data.Rewards.String(), rewardsDelta))
 
 			// Add rank information if available
 			if data.Rank != nil {
@@ -563,16 +586,11 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		previousData.Rewards = totalRewards
 		previousData.LastCheck = time.Now()
 
-		// Update per-peer previous data
+		// Update per-peer previous data - ALWAYS use Alchemy API data
 		for _, data := range peerData {
 			peerID := data.PeerID
 			votesStr := data.Votes.String()
-			rewardsStr := "0"
-			if data.Rank != nil {
-				rewardsStr = fmt.Sprintf("%d", data.Rank.TotalRewards)
-			} else if data.Rewards != nil {
-				rewardsStr = data.Rewards.String()
-			}
+			rewardsStr := data.Rewards.String() // Always use blockchain rewards from Alchemy
 			previousData.Peers[peerID] = PeerPreviousData{
 				Votes:   votesStr,
 				Rewards: rewardsStr,
@@ -1409,6 +1427,18 @@ For issues or questions, contact the G-Swarm team in Discord.`
 func (t *TelegramService) handleStatsCommand(telegramID string) error {
 	fmt.Printf("Handling stats request for Telegram ID: %s\n", telegramID)
 
+	// Load previous data for delta calculations
+	previousData, err := t.loadPreviousData()
+	if err != nil {
+		fmt.Printf("Warning: Could not load previous data: %v\n", err)
+		// Initialize empty previous data
+		previousData = &PreviousData{
+			Votes:   big.NewInt(0),
+			Rewards: big.NewInt(0),
+			Peers:   make(map[string]PeerPreviousData),
+		}
+	}
+
 	// Convert chat_id to number for API calls
 	var chatIDNum int64
 	if _, err := fmt.Sscanf(t.Config.ChatID, "%d", &chatIDNum); err != nil {
@@ -1505,8 +1535,11 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 		verificationSection.WriteString("💬 Use <code>/link-telegram</code> in the gensyn discord channel\n\n")
 	}
 
-	// Build per-peer breakdown
+	// Build per-peer breakdown with delta calculations
 	var peerBreakdown strings.Builder
+	if previousData.Peers == nil {
+		previousData.Peers = make(map[string]PeerPreviousData)
+	}
 	for i, data := range peerData {
 		// Truncate the peer ID for better readability
 		peerID := data.PeerID
@@ -1514,19 +1547,24 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 			peerID = peerID[:3] + "..." + peerID[len(peerID)-3:]
 		}
 
+		// Get previous values for this peer (if any)
+		prevPeer := previousData.Peers[data.PeerID]
+		prevVotes := new(big.Int)
+		if prevPeer.Votes != "" {
+			prevVotes.SetString(prevPeer.Votes, 10)
+		}
+		prevRewards := new(big.Int)
+		if prevPeer.Rewards != "" {
+			prevRewards.SetString(prevPeer.Rewards, 10)
+		}
+
+		// Compute deltas - ALWAYS use Alchemy API data for blockchain calculations
+		votesDelta := getChangeIndicator(prevVotes, data.Votes)
+		rewardsDelta := getChangeIndicator(prevRewards, data.Rewards)
+
 		peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
-		peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s\n", data.Votes.String()))
-		peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %d\n",
-			func() int {
-				if data.Rank != nil {
-					return data.Rank.TotalRewards
-				}
-				if data.Rewards != nil {
-					v, _ := new(big.Int).SetString(data.Rewards.String(), 10)
-					return int(v.Int64())
-				}
-				return 0
-			}()))
+		peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s %s\n", data.Votes.String(), votesDelta))
+		peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s %s\n", data.Rewards.String(), rewardsDelta))
 
 		// Add rank information if available
 		if data.Rank != nil {
@@ -1541,8 +1579,8 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 %s👤 <b>EOA Address:</b> <code>%s</code>
 🔍 <b>Peer IDs Monitored:</b> %d
 
-📈 <b>Total Votes:</b> %s
-💰 <b>Total Rewards:</b> %s
+📈 <b>Total Votes:</b> %s %s
+💰 <b>Total Rewards:</b> %s %s
 
 📋 <b>Per-Peer Breakdown:</b>
 %s⏰ <b>Last Updated:</b> %s
@@ -1552,7 +1590,9 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 		t.UserEOAAddress,
 		len(t.PeerIDs),
 		totalVotes.String(),
+		getChangeIndicator(previousData.Votes, totalVotes),
 		totalRewards.String(),
+		getChangeIndicator(previousData.Rewards, totalRewards),
 		peerBreakdown.String(),
 		time.Now().Format("2006-01-02 15:04:05"))
 
