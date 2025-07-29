@@ -445,7 +445,7 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		fmt.Printf("Checking peer ID %d/%d: %s\n", i+1, len(t.PeerIDs), peerID)
 
 		// Query blockchain data for this peer ID
-		blockchainData, err := t.GetBlockchainDataForPeerID(peerID)
+		blockchainData, err := t.GetBlockchainDataForPeerID(peerID, previousData)
 		if err != nil {
 			fmt.Printf("Warning: Could not get blockchain data for peer ID %s: %v\n", peerID, err)
 			continue
@@ -613,38 +613,54 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 }
 
 // GetBlockchainDataForPeerID gets blockchain data for a specific peer ID
-func (t *TelegramService) GetBlockchainDataForPeerID(peerID string) (*BlockchainData, error) {
+// If API calls fail, it preserves the previous values to prevent negative changes
+func (t *TelegramService) GetBlockchainDataForPeerID(peerID string, previousData *PreviousData) (*BlockchainData, error) {
 	fmt.Printf("Querying blockchain data for peer ID: %s\n", peerID)
 
-	// Try both contract addresses, but only use the first one that returns data
-	// to avoid double-counting
-	contracts := []string{coordAddrGenRL}
-	var totalVotes *big.Int = big.NewInt(0)
-	var totalRewards *big.Int = big.NewInt(0)
-
-	for _, contract := range contracts {
-		var contractHasData bool
-
-		// For votes, we pass the peer ID directly
-		if v, err := t.queryUserVotes(peerID, contract); err == nil && v.Cmp(big.NewInt(0)) > 0 {
-			totalVotes = v // Use only this value, don't add
-			fmt.Printf("Found votes for peer ID %s on contract %s: %s\n", peerID, contract, v.String())
-			contractHasData = true
+	// Get previous values for this peer to preserve them if API calls fail
+	var prevVotes *big.Int = big.NewInt(0)
+	var prevRewards *big.Int = big.NewInt(0)
+	if previousData != nil && previousData.Peers != nil {
+		if prevPeer, exists := previousData.Peers[peerID]; exists {
+			if prevPeer.Votes != "" {
+				prevVotes.SetString(prevPeer.Votes, 10)
+			}
+			if prevPeer.Rewards != "" {
+				prevRewards.SetString(prevPeer.Rewards, 10)
+			}
 		}
+	}
 
-		// For rewards, we pass the peer ID as part of the array
-		peerIds := []string{peerID}
-		if r, err := t.queryUserRewards(peerIds, contract); err == nil && r.Cmp(big.NewInt(0)) > 0 {
-			totalRewards = r // Use only this value, don't add
-			fmt.Printf("Found rewards for peer ID %s on contract %s: %s\n", peerID, contract, r.String())
-			contractHasData = true
-		}
+	// Query the GenRL-Swarm contract
+	contract := coordAddrGenRL
+	var totalVotes *big.Int = nil
+	var totalRewards *big.Int = nil
 
-		// If we found any data on this contract, use it and don't check the next one
-		if contractHasData {
-			fmt.Printf("Using data from contract %s for peer ID %s\n", contract, peerID)
-			break
-		}
+	// For votes, we pass the peer ID directly
+	if v, err := t.queryUserVotes(peerID, contract); err == nil && v.Cmp(big.NewInt(0)) > 0 {
+		totalVotes = v
+		fmt.Printf("Found votes for peer ID %s on contract %s: %s\n", peerID, contract, v.String())
+	} else if err != nil {
+		fmt.Printf("Warning: Failed to query votes for peer ID %s on contract %s: %v\n", peerID, contract, err)
+	}
+
+	// For rewards, we pass the peer ID as part of the array
+	peerIds := []string{peerID}
+	if r, err := t.queryUserRewards(peerIds, contract); err == nil && r.Cmp(big.NewInt(0)) > 0 {
+		totalRewards = r
+		fmt.Printf("Found rewards for peer ID %s on contract %s: %s\n", peerID, contract, r.String())
+	} else if err != nil {
+		fmt.Printf("Warning: Failed to query rewards for peer ID %s on contract %s: %v\n", peerID, contract, err)
+	}
+
+	// If API calls failed and we couldn't get new data, preserve previous values
+	if totalVotes == nil {
+		fmt.Printf("No votes data available for peer ID %s, preserving previous value: %s\n", peerID, prevVotes.String())
+		totalVotes = prevVotes
+	}
+	if totalRewards == nil {
+		fmt.Printf("No rewards data available for peer ID %s, preserving previous value: %s\n", peerID, prevRewards.String())
+		totalRewards = prevRewards
 	}
 
 	// Get ETH balance for the EOA address (only if it's an Ethereum address)
@@ -653,6 +669,8 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string) (*Blockchain
 		if b, err := t.queryUserBalance(t.UserEOAAddress); err == nil {
 			balance = b
 			fmt.Printf("Found balance for EOA %s: %s\n", t.UserEOAAddress, balance.String())
+		} else {
+			fmt.Printf("Warning: Failed to get balance for EOA %s: %v\n", t.UserEOAAddress, err)
 		}
 	} else {
 		fmt.Printf("Skipping balance query - not an Ethereum address: %s\n", t.UserEOAAddress)
@@ -669,6 +687,8 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string) (*Blockchain
 // Function selector: 0xdfb3c7df
 // Function signature: getVoterVoteCount(string memory peerId) public view returns (uint256)
 func (t *TelegramService) queryUserVotes(peerId string, contractAddress string) (*big.Int, error) {
+	fmt.Printf("Querying votes for peer ID: %s on contract: %s\n", peerId, contractAddress)
+
 	// Function selector for getVoterVoteCount: 0xdfb3c7df
 	methodID := "0xdfb3c7df"
 
@@ -708,7 +728,7 @@ func (t *TelegramService) queryUserVotes(peerId string, contractAddress string) 
 	// Make the request
 	result, err := t.makeAlchemyRequest(request)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Alchemy API: %w", err)
+		return nil, fmt.Errorf("failed to call Alchemy API for votes (peerId: %s): %w", peerId, err)
 	}
 
 	// Parse the result
@@ -718,11 +738,13 @@ func (t *TelegramService) queryUserVotes(peerId string, contractAddress string) 
 			if len(resultStr) >= 64 {
 				votes := new(big.Int)
 				votes.SetString(resultStr, 16)
+				fmt.Printf("Successfully parsed votes for peer ID %s: %s\n", peerId, votes.String())
 				return votes, nil
 			}
 		}
 	}
 
+	fmt.Printf("No valid votes data found for peer ID %s\n", peerId)
 	return big.NewInt(0), nil
 }
 
@@ -730,6 +752,8 @@ func (t *TelegramService) queryUserVotes(peerId string, contractAddress string) 
 // Function selector: 0x80c3d97f
 // Function signature: getTotalRewards(string[] memory peerIds) public view returns (int256[])
 func (t *TelegramService) queryUserRewards(peerIds []string, contractAddress string) (*big.Int, error) {
+	fmt.Printf("Querying rewards for peer IDs: %v on contract: %s\n", peerIds, contractAddress)
+
 	// Function selector for getTotalRewards: 0x80c3d97f
 	methodID := "0x80c3d97f"
 
@@ -786,7 +810,7 @@ func (t *TelegramService) queryUserRewards(peerIds []string, contractAddress str
 	// Make the request
 	result, err := t.makeAlchemyRequest(request)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Alchemy API: %w", err)
+		return nil, fmt.Errorf("failed to call Alchemy API for rewards (peerIds: %v): %w", peerIds, err)
 	}
 
 	// Parse the result - this returns int256[] (array of rewards)
@@ -806,17 +830,21 @@ func (t *TelegramService) queryUserRewards(peerIds []string, contractAddress str
 					firstValueHex := resultStr[128:192]
 					rewards := new(big.Int)
 					rewards.SetString(firstValueHex, 16)
+					fmt.Printf("Successfully parsed rewards for peer IDs %v: %s\n", peerIds, rewards.String())
 					return rewards, nil
 				}
 			}
 		}
 	}
 
+	fmt.Printf("No valid rewards data found for peer IDs %v\n", peerIds)
 	return big.NewInt(0), nil
 }
 
 // queryUserBalance queries the user's ETH balance using Alchemy API
 func (t *TelegramService) queryUserBalance(userAddress string) (*big.Int, error) {
+	fmt.Printf("Querying balance for address: %s\n", userAddress)
+
 	// Create the JSON-RPC request
 	request := AlchemyRequest{
 		JSONRPC: "2.0",
@@ -831,7 +859,7 @@ func (t *TelegramService) queryUserBalance(userAddress string) (*big.Int, error)
 	// Make the request to Alchemy API
 	result, err := t.makeAlchemyRequest(request)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Alchemy API: %w", err)
+		return nil, fmt.Errorf("failed to call Alchemy API for balance (address: %s): %w", userAddress, err)
 	}
 
 	// Parse the result
@@ -840,14 +868,16 @@ func (t *TelegramService) queryUserBalance(userAddress string) (*big.Int, error)
 			resultStr = strings.TrimPrefix(resultStr, "0x")
 			balance := new(big.Int)
 			balance.SetString(resultStr, 16)
+			fmt.Printf("Successfully parsed balance for address %s: %s\n", userAddress, balance.String())
 			return balance, nil
 		}
 	}
 
+	fmt.Printf("No valid balance data found for address %s\n", userAddress)
 	return big.NewInt(0), nil
 }
 
-// makeAlchemyRequest makes a request to the Alchemy API
+// makeAlchemyRequest makes a request to the Alchemy API with retries and exponential backoff
 func (t *TelegramService) makeAlchemyRequest(request AlchemyRequest) (interface{}, error) {
 	// Prepare the request body
 	requestBody, err := json.Marshal(request)
@@ -855,84 +885,155 @@ func (t *TelegramService) makeAlchemyRequest(request AlchemyRequest) (interface{
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create the HTTP request - use public endpoint
-	url := alchemyPublicURL
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	// Retry configuration
+	maxRetries := 5
+	baseDelay := 1 * time.Second
+	maxDelay := 30 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Create the HTTP request - use public endpoint
+		url := alchemyPublicURL
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+
+		// Make the request
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to make request: %w", err)
+			if attempt < maxRetries {
+				delay := time.Duration(attempt+1) * baseDelay
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				fmt.Printf("Request failed, retrying in %v (attempt %d/%d): %v\n", delay, attempt+1, maxRetries+1, err)
+				time.Sleep(delay)
+				continue
+			}
+			return nil, lastErr
+		}
+		defer resp.Body.Close()
+
+		// Read the response
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", err)
+			if attempt < maxRetries {
+				delay := time.Duration(attempt+1) * baseDelay
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				fmt.Printf("Failed to read response, retrying in %v (attempt %d/%d): %v\n", delay, attempt+1, maxRetries+1, err)
+				time.Sleep(delay)
+				continue
+			}
+			return nil, lastErr
+		}
+
+		// Debug: Print the response
+		fmt.Printf("Alchemy API Response: %s\n", string(body))
+
+		// Check if response is JSON
+		if !strings.HasPrefix(strings.TrimSpace(string(body)), "{") {
+			lastErr = fmt.Errorf("non-JSON response from Alchemy API: %s", string(body))
+			if attempt < maxRetries {
+				delay := time.Duration(attempt+1) * baseDelay
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				fmt.Printf("Non-JSON response, retrying in %v (attempt %d/%d)\n", delay, attempt+1, maxRetries+1)
+				time.Sleep(delay)
+				continue
+			}
+			return nil, lastErr
+		}
+
+		// Parse the response
+		var response AlchemyResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			lastErr = fmt.Errorf("failed to parse response: %w", err)
+			if attempt < maxRetries {
+				delay := time.Duration(attempt+1) * baseDelay
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				fmt.Printf("Failed to parse response, retrying in %v (attempt %d/%d): %v\n", delay, attempt+1, maxRetries+1, err)
+				time.Sleep(delay)
+				continue
+			}
+			return nil, lastErr
+		}
+
+		// Check for errors
+		if response.Error != nil {
+			// Check if it's a rate limit error (code 429 or specific rate limit messages)
+			isRateLimit := response.Error.Code == 429 ||
+				strings.Contains(strings.ToLower(response.Error.Message), "rate limit") ||
+				strings.Contains(strings.ToLower(response.Error.Message), "too many requests")
+
+			if isRateLimit && attempt < maxRetries {
+				// Exponential backoff for rate limiting
+				delay := time.Duration(1<<uint(attempt)) * baseDelay
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				fmt.Printf("Rate limited, retrying in %v (attempt %d/%d): %s\n", delay, attempt+1, maxRetries+1, response.Error.Message)
+				time.Sleep(delay)
+				continue
+			}
+
+			lastErr = fmt.Errorf("Alchemy API error: %s (code: %d)", response.Error.Message, response.Error.Code)
+			if attempt < maxRetries {
+				delay := time.Duration(attempt+1) * baseDelay
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				fmt.Printf("API error, retrying in %v (attempt %d/%d): %s\n", delay, attempt+1, maxRetries+1, response.Error.Message)
+				time.Sleep(delay)
+				continue
+			}
+			return nil, lastErr
+		}
+
+		// Success - return the result
+		return response.Result, nil
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-
-	// Make the request
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Read the response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Debug: Print the response
-	fmt.Printf("Alchemy API Response: %s\n", string(body))
-
-	// Check if response is JSON
-	if !strings.HasPrefix(strings.TrimSpace(string(body)), "{") {
-		return nil, fmt.Errorf("non-JSON response from Alchemy API: %s", string(body))
-	}
-
-	// Parse the response
-	var response AlchemyResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Check for errors
-	if response.Error != nil {
-		return nil, fmt.Errorf("Alchemy API error: %s (code: %d)", response.Error.Message, response.Error.Code)
-	}
-
-	return response.Result, nil
+	return nil, fmt.Errorf("all retry attempts failed: %w", lastErr)
 }
 
 // GetBlockchainData queries all blockchain data for a user using Alchemy API
 func (t *TelegramService) GetBlockchainData(userAddress string) (*BlockchainData, error) {
 	fmt.Printf("Querying blockchain data for address: %s\n", userAddress)
 
-	// Try both contract addresses
-	contracts := []string{coordAddrGenRL}
+	// Query the GenRL-Swarm contract
+	contract := coordAddrGenRL
 
 	var votes *big.Int
 	var rewards *big.Int
 
-	// Try to get votes from either contract
+	// Try to get votes from the contract
 	// For votes, we pass the address as a peer ID
-	for _, contract := range contracts {
-		if v, err := t.queryUserVotes(userAddress, contract); err == nil && v.Cmp(big.NewInt(0)) > 0 {
-			votes = v
-			fmt.Printf("Found votes in contract %s: %s\n", contract, votes.String())
-			break
-		} else {
-			fmt.Printf("No votes found in contract %s: %v\n", contract, err)
-		}
+	if v, err := t.queryUserVotes(userAddress, contract); err == nil && v.Cmp(big.NewInt(0)) > 0 {
+		votes = v
+		fmt.Printf("Found votes in contract %s: %s\n", contract, votes.String())
+	} else {
+		fmt.Printf("No votes found in contract %s: %v\n", contract, err)
 	}
 
-	// Try to get rewards from either contract
+	// Try to get rewards from the contract
 	// For rewards, we need to pass an array of peer IDs
 	peerIds := []string{userAddress} // For now, treat the address as a peer ID
-	for _, contract := range contracts {
-		if r, err := t.queryUserRewards(peerIds, contract); err == nil && r.Cmp(big.NewInt(0)) > 0 {
-			rewards = r
-			fmt.Printf("Found rewards in contract %s: %s\n", contract, rewards.String())
-			break
-		} else {
-			fmt.Printf("No rewards found in contract %s: %v\n", contract, err)
-		}
+	if r, err := t.queryUserRewards(peerIds, contract); err == nil && r.Cmp(big.NewInt(0)) > 0 {
+		rewards = r
+		fmt.Printf("Found rewards in contract %s: %s\n", contract, rewards.String())
+	} else {
+		fmt.Printf("No rewards found in contract %s: %v\n", contract, err)
 	}
 
 	// Get ETH balance (only if it's an Ethereum address)
@@ -1285,73 +1386,71 @@ func (t *TelegramService) GetPeerIDs(eoaAddress string) ([]string, error) {
 	fmt.Printf("Debug: Calling getPeerId with data: %s\n", data)
 	fmt.Printf("Debug: Address parameter: %s\n", addressParam)
 
-	// Try both contract addresses
-	contracts := []string{coordAddrGenRL}
+	// Query the GenRL-Swarm contract
+	contract := coordAddrGenRL
+	fmt.Printf("Debug: Querying contract: %s\n", contract)
 
-	for _, contract := range contracts {
-		fmt.Printf("Debug: Trying contract: %s\n", contract)
-
-		// Create the eth_call request
-		request := AlchemyRequest{
-			JSONRPC: "2.0",
-			ID:      1,
-			Method:  "eth_call",
-			Params: []interface{}{
-				map[string]interface{}{
-					"data":  data,
-					"to":    contract,
-					"value": "0x0",
-				},
-				"latest",
+	// Create the eth_call request
+	request := AlchemyRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "eth_call",
+		Params: []interface{}{
+			map[string]interface{}{
+				"data":  data,
+				"to":    contract,
+				"value": "0x0",
 			},
-		}
-
-		// Make the request
-		result, err := t.makeAlchemyRequest(request)
-		if err != nil {
-			fmt.Printf("Debug: Error with contract %s: %v\n", contract, err)
-			continue
-		}
-
-		// Parse the result
-		resultStr, ok := result.(string)
-		if !ok {
-			fmt.Printf("Debug: Unexpected result type: %T\n", result)
-			continue
-		}
-
-		fmt.Printf("Debug: Got result: %s\n", resultStr)
-
-		// Use ABI-aware decoder to extract peer IDs
-		peerIDs, err := decodePeerIDs(resultStr)
-		if err != nil {
-			fmt.Printf("Debug: Failed to decode peer IDs from contract %s: %v\n", contract, err)
-			continue
-		}
-
-		if len(peerIDs) > 0 {
-			fmt.Printf("Found %d peer IDs for address %s on contract %s\n", len(peerIDs), eoaAddress, contract)
-			for i, peerID := range peerIDs {
-				fmt.Printf("  %d: %s\n", i+1, peerID)
-			}
-			return peerIDs, nil
-		} else {
-			fmt.Printf("Debug: No peer IDs found for this EOA on contract %s\n", contract)
-		}
+			"latest",
+		},
 	}
 
-	return nil, fmt.Errorf("no peer IDs found for address: %s on any contract", eoaAddress)
+	// Make the request
+	result, err := t.makeAlchemyRequest(request)
+	if err != nil {
+		fmt.Printf("Debug: Error with contract %s: %v\n", contract, err)
+		return nil, fmt.Errorf("failed to query peer IDs: %w", err)
+	}
+
+	// Parse the result
+	resultStr, ok := result.(string)
+	if !ok {
+		fmt.Printf("Debug: Unexpected result type: %T\n", result)
+		return nil, fmt.Errorf("unexpected result type from API")
+	}
+
+	fmt.Printf("Debug: Got result: %s\n", resultStr)
+
+	// Use ABI-aware decoder to extract peer IDs
+	peerIDs, err := decodePeerIDs(resultStr)
+	if err != nil {
+		fmt.Printf("Debug: Failed to decode peer IDs from contract %s: %v\n", contract, err)
+		return nil, fmt.Errorf("failed to decode peer IDs: %w", err)
+	}
+
+	if len(peerIDs) > 0 {
+		fmt.Printf("Found %d peer IDs for address %s on contract %s\n", len(peerIDs), eoaAddress, contract)
+		for i, peerID := range peerIDs {
+			fmt.Printf("  %d: %s\n", i+1, peerID)
+		}
+		return peerIDs, nil
+	} else {
+		fmt.Printf("Debug: No peer IDs found for this EOA on contract %s\n", contract)
+		return nil, fmt.Errorf("no peer IDs found for address: %s", eoaAddress)
+	}
 }
 
 // getChangeIndicator returns an emoji and the numeric delta if a value changed
+// For votes and rewards, we never report negative changes to prevent confusion
 func getChangeIndicator(previous, current *big.Int) string {
 	cmp := current.Cmp(previous)
 	if cmp > 0 {
 		delta := new(big.Int).Sub(current, previous)
 		return fmt.Sprintf("📈 (+%s)", delta.String())
 	} else if cmp < 0 {
-		delta := new(big.Int).Sub(previous, current)
-		return fmt.Sprintf("📉 (-%s)", delta.String())
+		// For votes and rewards, never report negative changes
+		// This prevents confusion when API calls fail and return zero values
+		return "➡️ (no change)"
 	}
 	return "➡️ (0)"
 }
@@ -1488,7 +1587,7 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 		fmt.Printf("Checking peer ID %d/%d: %s\n", i+1, len(t.PeerIDs), peerID)
 
 		// Query blockchain data for this peer ID
-		blockchainData, err := t.GetBlockchainDataForPeerID(peerID)
+		blockchainData, err := t.GetBlockchainDataForPeerID(peerID, previousData)
 		if err != nil {
 			fmt.Printf("Warning: Could not get blockchain data for peer ID %s: %v\n", peerID, err)
 			continue
