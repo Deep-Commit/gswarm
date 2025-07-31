@@ -52,6 +52,7 @@ const DefaultConfigPath = "telegram-config.json"
 type BlockchainData struct {
 	Votes   *big.Int
 	Rewards *big.Int
+	Wins    *big.Int
 	Balance *big.Int
 }
 
@@ -61,6 +62,7 @@ type BlockchainData struct {
 type PeerPreviousData struct {
 	Votes   string `json:"votes"`
 	Rewards string `json:"rewards"`
+	Wins    string `json:"wins"`
 }
 
 // PreviousData stores the previous blockchain data for comparison
@@ -69,6 +71,7 @@ type PeerPreviousData struct {
 type PreviousData struct {
 	Votes     *big.Int                    `json:"votes"`   // total
 	Rewards   *big.Int                    `json:"rewards"` // total
+	Wins      *big.Int                    `json:"wins"`    // total
 	Peers     map[string]PeerPreviousData `json:"peers"`   // per-peer
 	LastCheck time.Time                   `json:"last_check"`
 }
@@ -96,7 +99,7 @@ func NewTelegramService(configPath string, forceUpdate bool, eoaAddress string, 
 		EOAAddress:        eoaAddress,
 		BotToken:          botToken,
 		ChatID:            chatID,
-		PreviousData:      &PreviousData{Votes: big.NewInt(0), Rewards: big.NewInt(0), Peers: make(map[string]PeerPreviousData)},
+		PreviousData:      &PreviousData{Votes: big.NewInt(0), Rewards: big.NewInt(0), Wins: big.NewInt(0), Peers: make(map[string]PeerPreviousData)},
 		StopChan:          make(chan bool),
 	}
 }
@@ -433,10 +436,12 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 
 	var totalVotes *big.Int = big.NewInt(0)
 	var totalRewards *big.Int = big.NewInt(0)
+	var totalWins *big.Int = big.NewInt(0)
 	var peerData []struct {
 		PeerID  string
 		Votes   *big.Int
 		Rewards *big.Int
+		Wins    *big.Int
 		Rank    *Rank
 	}
 
@@ -454,6 +459,7 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		// Add to totals
 		totalVotes.Add(totalVotes, blockchainData.Votes)
 		totalRewards.Add(totalRewards, blockchainData.Rewards)
+		totalWins.Add(totalWins, blockchainData.Wins)
 
 		// Find rank data for this peer if available
 		var rankData *Rank
@@ -478,11 +484,13 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 			PeerID  string
 			Votes   *big.Int
 			Rewards *big.Int
+			Wins    *big.Int
 			Rank    *Rank
 		}{
 			PeerID:  peerID,
 			Votes:   blockchainData.Votes,
 			Rewards: blockchainData.Rewards,
+			Wins:    blockchainData.Wins,
 			Rank:    rankData,
 		})
 
@@ -496,10 +504,23 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 	votesChanged := totalVotes.Cmp(previousData.Votes) != 0
 	rewardsChanged := totalRewards.Cmp(previousData.Rewards) != 0
 
-	if votesChanged || rewardsChanged {
+	// Handle nil wins field
+	var winsChanged bool
+	if previousData.Wins != nil {
+		winsChanged = totalWins.Cmp(previousData.Wins) != 0
+	} else {
+		// If previous wins is nil, consider it changed if current wins > 0
+		winsChanged = totalWins.Cmp(big.NewInt(0)) > 0
+	}
+
+	if votesChanged || rewardsChanged || winsChanged {
 		fmt.Printf("Changes detected!\n")
-		fmt.Printf("Previous - Votes: %s, Rewards: %s\n", previousData.Votes.String(), previousData.Rewards.String())
-		fmt.Printf("Current  - Votes: %s, Rewards: %s\n", totalVotes.String(), totalRewards.String())
+		prevWinsStr := "0"
+		if previousData.Wins != nil {
+			prevWinsStr = previousData.Wins.String()
+		}
+		fmt.Printf("Previous - Votes: %s, Rewards: %s, Wins: %s\n", previousData.Votes.String(), previousData.Rewards.String(), prevWinsStr)
+		fmt.Printf("Current  - Votes: %s, Rewards: %s, Wins: %s\n", totalVotes.String(), totalRewards.String(), totalWins.String())
 
 		// Build per-peer breakdown
 		var peerBreakdown strings.Builder
@@ -523,14 +544,20 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 			if prevPeer.Rewards != "" {
 				prevRewards.SetString(prevPeer.Rewards, 10)
 			}
+			prevWins := new(big.Int) // Defaults to 0
+			if prevPeer.Wins != "" {
+				prevWins.SetString(prevPeer.Wins, 10)
+			}
 
 			// Compute deltas - ALWAYS use Alchemy API data for blockchain calculations
 			votesDelta := getChangeIndicator(prevVotes, data.Votes)
 			rewardsDelta := getChangeIndicator(prevRewards, data.Rewards)
+			winsDelta := getChangeIndicator(prevWins, data.Wins)
 
 			peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
 			peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s %s\n", data.Votes.String(), votesDelta))
 			peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s %s\n", data.Rewards.String(), rewardsDelta))
+			peerBreakdown.WriteString(fmt.Sprintf("   🎯 Wins: %s %s\n", data.Wins.String(), winsDelta))
 
 			// Add rank information if available
 			if data.Rank != nil {
@@ -567,6 +594,7 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 
 📈 <b>Total Votes:</b> %s %s
 💰 <b>Total Rewards:</b> %s %s
+🎯 <b>Total Wins:</b> %s %s
 
 📋 <b>Per-Peer Breakdown:</b>
 %s⏰ <b>Last Check:</b> %s`,
@@ -577,6 +605,8 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 			getChangeIndicator(previousData.Votes, totalVotes),
 			totalRewards.String(),
 			getChangeIndicator(previousData.Rewards, totalRewards),
+			totalWins.String(),
+			getChangeIndicator(previousData.Wins, totalWins),
 			peerBreakdown.String(),
 			time.Now().Format("2006-01-02 15:04:05"))
 
@@ -588,6 +618,7 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 		// Update previous data
 		previousData.Votes = totalVotes
 		previousData.Rewards = totalRewards
+		previousData.Wins = totalWins
 		previousData.LastCheck = time.Now()
 
 		// Update per-peer previous data - ALWAYS use Alchemy API data
@@ -595,9 +626,11 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 			peerID := data.PeerID
 			votesStr := data.Votes.String()
 			rewardsStr := data.Rewards.String() // Always use blockchain rewards from Alchemy
+			winsStr := data.Wins.String()       // Always use blockchain wins from Alchemy
 			previousData.Peers[peerID] = PeerPreviousData{
 				Votes:   votesStr,
 				Rewards: rewardsStr,
+				Wins:    winsStr,
 			}
 		}
 
@@ -606,7 +639,7 @@ func (t *TelegramService) checkAndNotifyWithPeerIDs(previousData *PreviousData) 
 			fmt.Printf("Warning: Could not save previous data: %v\n", err)
 		}
 	} else {
-		fmt.Printf("No changes detected. Votes: %s, Rewards: %s\n", totalVotes.String(), totalRewards.String())
+		fmt.Printf("No changes detected. Votes: %s, Rewards: %s, Wins: %s\n", totalVotes.String(), totalRewards.String(), totalWins.String())
 	}
 
 	return nil
@@ -620,6 +653,7 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string, previousData
 	// Get previous values for this peer to preserve them if API calls fail
 	var prevVotes *big.Int = big.NewInt(0)
 	var prevRewards *big.Int = big.NewInt(0)
+	var prevWins *big.Int = big.NewInt(0)
 	if previousData != nil && previousData.Peers != nil {
 		if prevPeer, exists := previousData.Peers[peerID]; exists {
 			if prevPeer.Votes != "" {
@@ -628,6 +662,9 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string, previousData
 			if prevPeer.Rewards != "" {
 				prevRewards.SetString(prevPeer.Rewards, 10)
 			}
+			if prevPeer.Wins != "" {
+				prevWins.SetString(prevPeer.Wins, 10)
+			}
 		}
 	}
 
@@ -635,6 +672,7 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string, previousData
 	contract := coordAddrGenRL
 	var totalVotes *big.Int = nil
 	var totalRewards *big.Int = nil
+	var totalWins *big.Int = nil
 
 	// For votes, we pass the peer ID directly
 	if v, err := t.queryUserVotes(peerID, contract); err == nil && v.Cmp(big.NewInt(0)) > 0 {
@@ -653,6 +691,14 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string, previousData
 		fmt.Printf("Warning: Failed to query rewards for peer ID %s on contract %s: %v\n", peerID, contract, err)
 	}
 
+	// For wins, we pass the peer ID as part of the array
+	if w, err := t.queryUserWins(peerIds, contract); err == nil && w.Cmp(big.NewInt(0)) > 0 {
+		totalWins = w
+		fmt.Printf("Found wins for peer ID %s on contract %s: %s\n", peerID, contract, w.String())
+	} else if err != nil {
+		fmt.Printf("Warning: Failed to query wins for peer ID %s on contract %s: %v\n", peerID, contract, err)
+	}
+
 	// If API calls failed and we couldn't get new data, preserve previous values
 	if totalVotes == nil {
 		fmt.Printf("No votes data available for peer ID %s, preserving previous value: %s\n", peerID, prevVotes.String())
@@ -661,6 +707,10 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string, previousData
 	if totalRewards == nil {
 		fmt.Printf("No rewards data available for peer ID %s, preserving previous value: %s\n", peerID, prevRewards.String())
 		totalRewards = prevRewards
+	}
+	if totalWins == nil {
+		fmt.Printf("No wins data available for peer ID %s, preserving previous value: %s\n", peerID, prevWins.String())
+		totalWins = prevWins
 	}
 
 	// Get ETH balance for the EOA address (only if it's an Ethereum address)
@@ -679,6 +729,7 @@ func (t *TelegramService) GetBlockchainDataForPeerID(peerID string, previousData
 	return &BlockchainData{
 		Votes:   totalVotes,
 		Rewards: totalRewards,
+		Wins:    totalWins,
 		Balance: balance,
 	}, nil
 }
@@ -838,6 +889,99 @@ func (t *TelegramService) queryUserRewards(peerIds []string, contractAddress str
 	}
 
 	fmt.Printf("No valid rewards data found for peer IDs %v\n", peerIds)
+	return big.NewInt(0), nil
+}
+
+// queryUserWins queries the smart contract for user wins using Alchemy API
+// Function selector: 0x099c4002
+// Function signature: getTotalWins(string[] memory peerIds) public view returns (int256[])
+func (t *TelegramService) queryUserWins(peerIds []string, contractAddress string) (*big.Int, error) {
+	fmt.Printf("Querying wins for peer IDs: %v on contract: %s\n", peerIds, contractAddress)
+
+	// Function selector for getTotalWins: 0x099c4002
+	methodID := "0x099c4002"
+
+	// Create the call data for string[] parameter
+	// First, encode the offset to the array data (32 bytes)
+	offset := "0000000000000000000000000000000000000000000000000000000000000020"
+
+	// Then encode the array length
+	arrayLength := fmt.Sprintf("%064x", len(peerIds))
+
+	// Then encode each string in the array
+	var stringData string
+	currentOffset := len(peerIds) * 32 // Start of string content after the offsets
+	for _, peerId := range peerIds {
+		// Encode string offset (relative to start of array data)
+		stringOffsetHex := fmt.Sprintf("%064x", currentOffset)
+		stringData += stringOffsetHex
+		// The length of the string content in bytes
+		currentOffset += ((len(peerId) + 31) / 32) * 32
+	}
+
+	// Then encode the actual string data
+	for _, peerId := range peerIds {
+		// Encode string length
+		stringLength := fmt.Sprintf("%064x", len(peerId))
+		// Encode string data and pad to 32 bytes
+		stringBytes := []byte(peerId)
+		stringHex := fmt.Sprintf("%x", stringBytes)
+		// Pad to a multiple of 32 bytes (64 hex chars)
+		for len(stringHex)%64 != 0 {
+			stringHex += "0"
+		}
+		stringData += stringLength + stringHex
+	}
+
+	// Combine all parts
+	data := methodID + offset + arrayLength + stringData
+
+	// Create the eth_call request
+	request := AlchemyRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "eth_call",
+		Params: []interface{}{
+			map[string]interface{}{
+				"data":  data,
+				"to":    coordAddrGenRL, // Use the GenRL-Swarm contract
+				"value": "0x0",
+			},
+			"latest",
+		},
+	}
+
+	// Make the request
+	result, err := t.makeAlchemyRequest(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Alchemy API for wins (peerIds: %v): %w", peerIds, err)
+	}
+
+	// Parse the result - this returns int256[] (array of wins)
+	if resultStr, ok := result.(string); ok {
+		if strings.HasPrefix(resultStr, "0x") {
+			resultStr = strings.TrimPrefix(resultStr, "0x")
+			// The result is an array, so we need to parse it correctly
+			// Format: [offset][length][value1][value2]...
+			if len(resultStr) >= 128 { // At least offset + length
+				// Get array length
+				arrayLengthHex := resultStr[64:128]
+				arrayLength := new(big.Int)
+				arrayLength.SetString(arrayLengthHex, 16)
+
+				// If we have at least one value, get the first one
+				if arrayLength.Cmp(big.NewInt(0)) > 0 && len(resultStr) >= 192 {
+					firstValueHex := resultStr[128:192]
+					wins := new(big.Int)
+					wins.SetString(firstValueHex, 16)
+					fmt.Printf("Successfully parsed wins for peer IDs %v: %s\n", peerIds, wins.String())
+					return wins, nil
+				}
+			}
+		}
+	}
+
+	fmt.Printf("No valid wins data found for peer IDs %v\n", peerIds)
 	return big.NewInt(0), nil
 }
 
@@ -1443,6 +1587,14 @@ func (t *TelegramService) GetPeerIDs(eoaAddress string) ([]string, error) {
 // getChangeIndicator returns an emoji and the numeric delta if a value changed
 // For votes and rewards, we never report negative changes to prevent confusion
 func getChangeIndicator(previous, current *big.Int) string {
+	// Handle nil previous value
+	if previous == nil {
+		if current.Cmp(big.NewInt(0)) > 0 {
+			return fmt.Sprintf("📈 (+%s)", current.String())
+		}
+		return "➡️ (new)"
+	}
+
 	cmp := current.Cmp(previous)
 	if cmp > 0 {
 		delta := new(big.Int).Sub(current, previous)
@@ -1538,6 +1690,7 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 		previousData = &PreviousData{
 			Votes:   big.NewInt(0),
 			Rewards: big.NewInt(0),
+			Wins:    big.NewInt(0),
 			Peers:   make(map[string]PeerPreviousData),
 		}
 	}
@@ -1575,10 +1728,12 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 	fmt.Printf("Fetching current blockchain data...\n")
 	var totalVotes *big.Int = big.NewInt(0)
 	var totalRewards *big.Int = big.NewInt(0)
+	var totalWins *big.Int = big.NewInt(0)
 	var peerData []struct {
 		PeerID  string
 		Votes   *big.Int
 		Rewards *big.Int
+		Wins    *big.Int
 		Rank    *Rank
 	}
 
@@ -1596,6 +1751,7 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 		// Add to totals
 		totalVotes.Add(totalVotes, blockchainData.Votes)
 		totalRewards.Add(totalRewards, blockchainData.Rewards)
+		totalWins.Add(totalWins, blockchainData.Wins)
 
 		// Find rank data for this peer if available
 		var rankData *Rank
@@ -1613,11 +1769,13 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 			PeerID  string
 			Votes   *big.Int
 			Rewards *big.Int
+			Wins    *big.Int
 			Rank    *Rank
 		}{
 			PeerID:  peerID,
 			Votes:   blockchainData.Votes,
 			Rewards: blockchainData.Rewards,
+			Wins:    blockchainData.Wins,
 			Rank:    rankData,
 		})
 	}
@@ -1661,14 +1819,20 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 		if prevPeer.Rewards != "" {
 			prevRewards.SetString(prevPeer.Rewards, 10)
 		}
+		prevWins := new(big.Int)
+		if prevPeer.Wins != "" {
+			prevWins.SetString(prevPeer.Wins, 10)
+		}
 
 		// Compute deltas - ALWAYS use Alchemy API data for blockchain calculations
 		votesDelta := getChangeIndicator(prevVotes, data.Votes)
 		rewardsDelta := getChangeIndicator(prevRewards, data.Rewards)
+		winsDelta := getChangeIndicator(prevWins, data.Wins)
 
 		peerBreakdown.WriteString(fmt.Sprintf("🔹 <b>Peer %d:</b> %s\n", i+1, peerID))
 		peerBreakdown.WriteString(fmt.Sprintf("   📈 Votes: %s %s\n", data.Votes.String(), votesDelta))
 		peerBreakdown.WriteString(fmt.Sprintf("   💰 Rewards: %s %s\n", data.Rewards.String(), rewardsDelta))
+		peerBreakdown.WriteString(fmt.Sprintf("   🎯 Wins: %s %s\n", data.Wins.String(), winsDelta))
 
 		// Add rank information if available
 		if data.Rank != nil {
@@ -1686,6 +1850,7 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 
 📈 <b>Total Votes:</b> %s %s
 💰 <b>Total Rewards:</b> %s %s
+🎯 <b>Total Wins:</b> %s %s
 
 📋 <b>Per-Peer Breakdown:</b>
 %s⏰ <b>Last Updated:</b> %s
@@ -1698,6 +1863,8 @@ func (t *TelegramService) handleStatsCommand(telegramID string) error {
 		getChangeIndicator(previousData.Votes, totalVotes),
 		totalRewards.String(),
 		getChangeIndicator(previousData.Rewards, totalRewards),
+		totalWins.String(),
+		getChangeIndicator(previousData.Wins, totalWins),
 		peerBreakdown.String(),
 		time.Now().Format("2006-01-02 15:04:05"))
 
