@@ -894,47 +894,36 @@ func (t *TelegramService) queryUserRewards(peerIds []string, contractAddress str
 
 // queryUserWins queries the smart contract for user wins using Alchemy API
 // Function selector: 0x099c4002
-// Function signature: getTotalWins(string[] memory peerIds) public view returns (int256[])
+// Function signature: getTotalWins(string calldata peerId) external view returns (uint256)
 func (t *TelegramService) queryUserWins(peerIds []string, contractAddress string) (*big.Int, error) {
 	fmt.Printf("Querying wins for peer IDs: %v on contract: %s\n", peerIds, contractAddress)
 
 	// Function selector for getTotalWins: 0x099c4002
 	methodID := "0x099c4002"
 
-	// Create the call data for string[] parameter
-	// First, encode the offset to the array data (32 bytes)
+	// Since the function takes a single string parameter, we'll use the first peer ID
+	if len(peerIds) == 0 {
+		return big.NewInt(0), fmt.Errorf("no peer IDs provided")
+	}
+	peerId := peerIds[0]
+
+	// Create the call data for string parameter (same as queryUserVotes)
+	// First, encode the offset to the string data (32 bytes)
 	offset := "0000000000000000000000000000000000000000000000000000000000000020"
 
-	// Then encode the array length
-	arrayLength := fmt.Sprintf("%064x", len(peerIds))
+	// Then encode the string length
+	stringLength := fmt.Sprintf("%064x", len(peerId))
 
-	// Then encode each string in the array
-	var stringData string
-	currentOffset := len(peerIds) * 32 // Start of string content after the offsets
-	for _, peerId := range peerIds {
-		// Encode string offset (relative to start of array data)
-		stringOffsetHex := fmt.Sprintf("%064x", currentOffset)
-		stringData += stringOffsetHex
-		// The length of the string content in bytes
-		currentOffset += ((len(peerId) + 31) / 32) * 32
-	}
-
-	// Then encode the actual string data
-	for _, peerId := range peerIds {
-		// Encode string length
-		stringLength := fmt.Sprintf("%064x", len(peerId))
-		// Encode string data and pad to 32 bytes
-		stringBytes := []byte(peerId)
-		stringHex := fmt.Sprintf("%x", stringBytes)
-		// Pad to a multiple of 32 bytes (64 hex chars)
-		for len(stringHex)%64 != 0 {
-			stringHex += "0"
-		}
-		stringData += stringLength + stringHex
+	// Then encode the string data (padded to 32 bytes)
+	stringBytes := []byte(peerId)
+	stringHex := fmt.Sprintf("%x", stringBytes)
+	// Pad to 32 bytes (64 hex chars)
+	for len(stringHex) < 64 {
+		stringHex += "0"
 	}
 
 	// Combine all parts
-	data := methodID + offset + arrayLength + stringData
+	data := methodID + offset + stringLength + stringHex
 
 	// Create the eth_call request
 	request := AlchemyRequest{
@@ -957,31 +946,20 @@ func (t *TelegramService) queryUserWins(peerIds []string, contractAddress string
 		return nil, fmt.Errorf("failed to call Alchemy API for wins (peerIds: %v): %w", peerIds, err)
 	}
 
-	// Parse the result - this returns int256[] (array of wins)
+	// Parse the result - this returns uint256 (single value)
 	if resultStr, ok := result.(string); ok {
 		if strings.HasPrefix(resultStr, "0x") {
 			resultStr = strings.TrimPrefix(resultStr, "0x")
-			// The result is an array, so we need to parse it correctly
-			// Format: [offset][length][value1][value2]...
-			if len(resultStr) >= 128 { // At least offset + length
-				// Get array length
-				arrayLengthHex := resultStr[64:128]
-				arrayLength := new(big.Int)
-				arrayLength.SetString(arrayLengthHex, 16)
-
-				// If we have at least one value, get the first one
-				if arrayLength.Cmp(big.NewInt(0)) > 0 && len(resultStr) >= 192 {
-					firstValueHex := resultStr[128:192]
-					wins := new(big.Int)
-					wins.SetString(firstValueHex, 16)
-					fmt.Printf("Successfully parsed wins for peer IDs %v: %s\n", peerIds, wins.String())
-					return wins, nil
-				}
+			if len(resultStr) >= 64 {
+				wins := new(big.Int)
+				wins.SetString(resultStr, 16)
+				fmt.Printf("Successfully parsed wins for peer ID %s: %s\n", peerId, wins.String())
+				return wins, nil
 			}
 		}
 	}
 
-	fmt.Printf("No valid wins data found for peer IDs %v\n", peerIds)
+	fmt.Printf("No valid wins data found for peer ID %s\n", peerId)
 	return big.NewInt(0), nil
 }
 
