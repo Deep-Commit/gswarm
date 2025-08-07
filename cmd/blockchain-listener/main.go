@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -121,6 +122,77 @@ func main() {
 	}
 }
 
+// parsePostgresDSN properly handles PostgreSQL connection strings with special characters in passwords
+func parsePostgresDSN(dsn string) (string, error) {
+	// If the DSN is already a valid URL, return it as is
+	if _, err := url.Parse(dsn); err == nil {
+		return dsn, nil
+	}
+
+	// Try to parse as a PostgreSQL URL
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		// Parse the URL to extract components
+		parsedURL, err := url.Parse(dsn)
+		if err != nil {
+			// If parsing fails, it might be due to special characters in the password
+			// Let's try to handle this manually
+			return handleMalformedPostgresURL(dsn)
+		}
+
+		// If there's a password, we need to handle it properly
+		if parsedURL.User != nil {
+			password, hasPassword := parsedURL.User.Password()
+			if hasPassword {
+				// URL-encode the password if it contains special characters
+				encodedPassword := url.QueryEscape(password)
+				// Reconstruct the user info with encoded password
+				parsedURL.User = url.UserPassword(parsedURL.User.Username(), encodedPassword)
+			}
+		}
+
+		return parsedURL.String(), nil
+	}
+
+	// If it's not a URL format, return as is (might be a different format)
+	return dsn, nil
+}
+
+// handleMalformedPostgresURL handles PostgreSQL URLs that fail to parse due to special characters
+func handleMalformedPostgresURL(dsn string) (string, error) {
+	// Try to extract the components manually
+	// Format: postgres://user:password@host:port/database?params
+
+	// Remove the protocol
+	dsn = strings.TrimPrefix(dsn, "postgres://")
+	dsn = strings.TrimPrefix(dsn, "postgresql://")
+
+	// Split by @ to separate user:password from host:port/database
+	parts := strings.SplitN(dsn, "@", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid PostgreSQL URL format")
+	}
+
+	userPass := parts[0]
+	hostDB := parts[1]
+
+	// Split user:password
+	userPassParts := strings.SplitN(userPass, ":", 2)
+	if len(userPassParts) != 2 {
+		return "", fmt.Errorf("invalid user:password format in PostgreSQL URL")
+	}
+
+	username := userPassParts[0]
+	password := userPassParts[1]
+
+	// URL-encode the password
+	encodedPassword := url.QueryEscape(password)
+
+	// Reconstruct the URL
+	reconstructed := fmt.Sprintf("postgres://%s:%s@%s", username, encodedPassword, hostDB)
+
+	return reconstructed, nil
+}
+
 func loadConfig(configFile, rpcURL, contractAddress, contractName, postgresDSN, logLevel, abiDirectory string) (*Config, error) {
 	config := &Config{}
 
@@ -130,7 +202,16 @@ func loadConfig(configFile, rpcURL, contractAddress, contractName, postgresDSN, 
 			// Use YAML config values
 			config.RPCURL = yamlConfig.Ethereum.RPCURL
 			config.ContractName = yamlConfig.Ethereum.ContractName
-			config.PostgresDSN = yamlConfig.Database.PostgresDSN
+
+			// Parse and handle the PostgreSQL DSN properly
+			if yamlConfig.Database.PostgresDSN != "" {
+				parsedDSN, err := parsePostgresDSN(yamlConfig.Database.PostgresDSN)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse PostgreSQL DSN from YAML: %w", err)
+				}
+				config.PostgresDSN = parsedDSN
+			}
+
 			config.LogLevel = yamlConfig.Logging.Level
 			config.ABIDirectory = yamlConfig.ABI.Directory
 			config.MonitoredEvents = yamlConfig.Events.MonitoredEvents
@@ -150,7 +231,16 @@ func loadConfig(configFile, rpcURL, contractAddress, contractName, postgresDSN, 
 	// Override with environment variables (environment takes precedence)
 	config.RPCURL = getEnvOrDefault("RPC_URL", config.RPCURL)
 	config.ContractName = getEnvOrDefault("CONTRACT_NAME", config.ContractName)
-	config.PostgresDSN = getEnvOrDefault("POSTGRES_DSN", config.PostgresDSN)
+
+	// Handle PostgreSQL DSN from environment variable
+	if envDSN := getEnvOrDefault("POSTGRES_DSN", ""); envDSN != "" {
+		parsedDSN, err := parsePostgresDSN(envDSN)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse PostgreSQL DSN from environment: %w", err)
+		}
+		config.PostgresDSN = parsedDSN
+	}
+
 	config.LogLevel = getEnvOrDefault("LOG_LEVEL", config.LogLevel)
 	config.ABIDirectory = getEnvOrDefault("ABI_DIRECTORY", config.ABIDirectory)
 
@@ -183,7 +273,14 @@ func loadConfig(configFile, rpcURL, contractAddress, contractName, postgresDSN, 
 		config.ContractName = contractName
 	}
 	if config.PostgresDSN == "" {
-		config.PostgresDSN = postgresDSN
+		// Handle PostgreSQL DSN from CLI argument
+		if postgresDSN != "" {
+			parsedDSN, err := parsePostgresDSN(postgresDSN)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse PostgreSQL DSN from CLI: %w", err)
+			}
+			config.PostgresDSN = parsedDSN
+		}
 	}
 	if config.LogLevel == "" {
 		config.LogLevel = logLevel
