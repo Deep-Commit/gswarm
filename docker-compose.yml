@@ -56,9 +56,6 @@ services:
     labels:
       - "com.gswarm.service=blockchain-listener"
       - "com.gswarm.version=${VERSION:-1.0.0}"
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   # PostgreSQL Database for blockchain events
   postgres:
