@@ -170,7 +170,7 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "block",
-			Description: "Verify your HFUploadVerified event and get BLOCK role",
+			Description: "Verify block role",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -194,15 +194,12 @@ func (b *Bot) registerCommands() error {
 		},
 	}
 
-	// Register commands for all configured guilds
+	// Register commands for all configured guilds using bulk overwrite to avoid downtime
 	for _, guild := range b.config.Guilds {
-		for _, cmd := range commands {
-			_, err := b.session.ApplicationCommandCreate(b.session.State.User.ID, guild.ID, cmd)
-			if err != nil {
-				return fmt.Errorf("failed to register command %s for guild %s: %w", cmd.Name, guild.ID, err)
-			}
-			log.Printf("Registered command: %s for guild: %s", cmd.Name, guild.ID)
+		if _, err := b.session.ApplicationCommandBulkOverwrite(b.session.State.User.ID, guild.ID, commands); err != nil {
+			return fmt.Errorf("failed to bulk overwrite commands for guild %s: %w", guild.ID, err)
 		}
+		log.Printf("Bulk-overwrote commands for guild: %s", guild.ID)
 	}
 
 	return nil
