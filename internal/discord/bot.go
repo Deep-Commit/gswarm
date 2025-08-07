@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Config holds the Discord bot configuration
@@ -25,6 +26,7 @@ type Config struct {
 	APIURL       string
 	APISecret    string
 	Guilds       []GuildConfig `yaml:"guilds"`
+	DatabaseDSN  string        `yaml:"database_dsn"`
 }
 
 // Bot represents the Discord bot instance
@@ -34,6 +36,7 @@ type Bot struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	httpClient *http.Client
+	dbPool     *pgxpool.Pool
 }
 
 // Helper to get GuildConfig by guild ID
@@ -65,12 +68,23 @@ func NewBot(config *Config) (*Bot, error) {
 		Timeout: 30 * time.Second, // Match the timeout used in API calls
 	}
 
+	// Connect to database if DSN is provided
+	var dbPool *pgxpool.Pool
+	if config.DatabaseDSN != "" {
+		dbPool, err = pgxpool.New(ctx, config.DatabaseDSN)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to database: %w", err)
+		}
+		log.Println("Connected to database successfully")
+	}
+
 	bot := &Bot{
 		config:     config,
 		session:    session,
 		ctx:        ctx,
 		cancel:     cancel,
 		httpClient: httpClient,
+		dbPool:     dbPool,
 	}
 
 	// Set up event handlers
@@ -103,6 +117,11 @@ func (b *Bot) Start() error {
 func (b *Bot) Stop() error {
 	b.cancel()
 
+	if b.dbPool != nil {
+		b.dbPool.Close()
+		log.Println("Database connection closed")
+	}
+
 	if b.session != nil {
 		if err := b.session.Close(); err != nil {
 			return fmt.Errorf("failed to close Discord session: %w", err)
@@ -127,6 +146,8 @@ func (b *Bot) handleInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	switch i.ApplicationCommandData().Name {
 	case "link-telegram":
 		b.handleLinkTelegramCommand(s, i)
+	case "block":
+		b.handleBlockCommand(s, i)
 	default:
 		b.handleUnknownCommand(s, i)
 	}
@@ -138,6 +159,30 @@ func (b *Bot) registerCommands() error {
 		{
 			Name:        "link-telegram",
 			Description: "Generate a code to link your Discord account with Telegram",
+		},
+		{
+			Name:        "block",
+			Description: "Verify your HFUploadVerified event and get BLOCK role",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "user_address",
+					Description: "Your Ethereum wallet address",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "training_id",
+					Description: "Your training ID",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "hugging_face_id",
+					Description: "Your Hugging Face ID",
+					Required:    false,
+				},
+			},
 		},
 	}
 
@@ -522,4 +567,267 @@ func (b *Bot) updateRoleAssignmentTimestamp(discordID string, success bool) erro
 
 	log.Printf("Successfully updated role assignment timestamp for user %s: %s", discordID, apiResp.Message)
 	return nil
+}
+
+// handleBlockCommand handles the /block command
+func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	discordID := i.Member.User.ID
+	guildID := i.GuildID
+	channelID := i.ChannelID
+
+	log.Printf("Block command received from Guild: %s, Channel: %s, User: %s", guildID, channelID, discordID)
+
+	// Check if database is connected
+	if b.dbPool == nil {
+		b.respondToInteraction(s, i, "❌ Database connection not available. Please try again later.", true)
+		return
+	}
+
+	// Get guild config
+	guildCfg := b.getGuildConfig(guildID)
+	if guildCfg == nil {
+		log.Printf("No config found for guild %s", guildID)
+		b.respondToInteraction(s, i, "❌ This server is not configured for block verification.", true)
+		return
+	}
+
+	// Parse command options
+	var userAddress, trainingID, huggingFaceID string
+	for _, option := range i.ApplicationCommandData().Options {
+		switch option.Name {
+		case "user_address":
+			userAddress = strings.TrimSpace(option.StringValue())
+		case "training_id":
+			trainingID = strings.TrimSpace(option.StringValue())
+		case "hugging_face_id":
+			huggingFaceID = strings.TrimSpace(option.StringValue())
+		}
+	}
+
+	// Validate required parameters
+	if userAddress == "" {
+		b.respondToInteraction(s, i, "❌ User address is required. Please provide your Ethereum wallet address.", true)
+		return
+	}
+
+	if trainingID == "" && huggingFaceID == "" {
+		b.respondToInteraction(s, i, "❌ Either training_id or hugging_face_id is required.", true)
+		return
+	}
+
+	// Input validation and sanitization
+	if err := b.validateInputs(userAddress, trainingID, huggingFaceID); err != nil {
+		log.Printf("Security: Invalid input detected from user %s: %v", discordID, err)
+		b.respondToInteraction(s, i, "❌ Invalid input format. Please check your wallet address and training ID/Hugging Face ID.", true)
+		return
+	}
+
+	// Check if user is already verified
+	var existingVerified bool
+	err := b.dbPool.QueryRow(context.Background(), `
+		SELECT EXISTS(SELECT 1 FROM verified_users WHERE discord_id = $1)
+	`, discordID).Scan(&existingVerified)
+	if err != nil {
+		log.Printf("Failed to check if user is already verified: %v", err)
+		b.respondToInteraction(s, i, "❌ Failed to check verification status. Please try again later.", true)
+		return
+	}
+
+	if existingVerified {
+		b.respondToInteraction(s, i, "✅ You are already verified and have the BLOCK role!", true)
+		return
+	}
+
+	// Check if HFUploadVerified event exists
+	var eventExists bool
+	var query string
+	var args []interface{}
+
+	if trainingID != "" {
+		query = `
+			SELECT EXISTS(
+				SELECT 1 FROM events 
+				WHERE LOWER(user_address) = LOWER($1) AND training_id = $2
+			)
+		`
+		args = []interface{}{userAddress, trainingID}
+	} else {
+		query = `
+			SELECT EXISTS(
+				SELECT 1 FROM events 
+				WHERE LOWER(user_address) = LOWER($1) AND hugging_face_id = $2
+			)
+		`
+		args = []interface{}{userAddress, huggingFaceID}
+	}
+
+	err = b.dbPool.QueryRow(context.Background(), query, args...).Scan(&eventExists)
+	if err != nil {
+		log.Printf("Failed to check for HFUploadVerified event: %v", err)
+		b.respondToInteraction(s, i, "❌ Failed to verify event. Please try again later.", true)
+		return
+	}
+
+	if !eventExists {
+		b.respondToInteraction(s, i, "❌ No HFUploadVerified event found for the provided information. Please check your user address and training ID/Hugging Face ID.", true)
+		return
+	}
+
+	// Insert verified user record
+	_, err = b.dbPool.Exec(context.Background(), `
+		INSERT INTO verified_users (discord_id, user_address, training_id, hugging_face_id)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (discord_id) DO NOTHING
+	`, discordID, strings.ToLower(userAddress), trainingID, huggingFaceID)
+	if err != nil {
+		log.Printf("Failed to insert verified user: %v", err)
+		b.respondToInteraction(s, i, "❌ Failed to record verification. Please try again later.", true)
+		return
+	}
+
+	// Assign BLOCK role
+	err = b.assignBlockRole(discordID, guildCfg)
+	if err != nil {
+		log.Printf("Failed to assign BLOCK role: %v", err)
+		b.respondToInteraction(s, i, "✅ Verification successful! However, there was an issue assigning the BLOCK role. Please contact an administrator.", true)
+		return
+	}
+
+	b.respondToInteraction(s, i, "✅ Verification successful! You have been assigned the BLOCK role.", true)
+}
+
+// assignBlockRole assigns the BLOCK role to a user
+func (b *Bot) assignBlockRole(discordID string, guildCfg *GuildConfig) error {
+	// For now, we'll use the existing role assignment logic
+	// You may want to create a separate BLOCK role ID in the config
+	return b.assignGSwarmRole(discordID, guildCfg)
+}
+
+// validateInputs validates and sanitizes user inputs
+func (b *Bot) validateInputs(userAddress, trainingID, huggingFaceID string) error {
+	// Check input lengths to prevent DoS attacks
+	if len(userAddress) > 42 || len(trainingID) > 255 || len(huggingFaceID) > 255 {
+		return fmt.Errorf("input too long")
+	}
+
+	// Check for SQL injection patterns
+	if b.containsSQLInjectionPattern(userAddress) ||
+		b.containsSQLInjectionPattern(trainingID) ||
+		b.containsSQLInjectionPattern(huggingFaceID) {
+		return fmt.Errorf("invalid characters detected in input")
+	}
+
+	// Validate Ethereum address format
+	if !b.isValidEthereumAddress(userAddress) {
+		return fmt.Errorf("invalid Ethereum address format")
+	}
+
+	// Validate training ID if provided
+	if trainingID != "" {
+		if len(trainingID) > 255 || !b.isValidTrainingID(trainingID) {
+			return fmt.Errorf("invalid training ID format")
+		}
+	}
+
+	// Validate Hugging Face ID if provided
+	if huggingFaceID != "" {
+		if len(huggingFaceID) > 255 || !b.isValidHuggingFaceID(huggingFaceID) {
+			return fmt.Errorf("invalid Hugging Face ID format")
+		}
+	}
+
+	return nil
+}
+
+// containsSQLInjectionPattern checks for common SQL injection patterns
+func (b *Bot) containsSQLInjectionPattern(input string) bool {
+	// Convert to lowercase for case-insensitive checking
+	lowerInput := strings.ToLower(input)
+
+	// Check for common SQL injection patterns
+	sqlPatterns := []string{
+		"';", "';--", "';/*", "';#",
+		"union", "select", "insert", "update", "delete", "drop", "create", "alter",
+		"exec", "execute", "script", "javascript:", "vbscript:", "onload=",
+		"<script", "</script>", "javascript:", "vbscript:",
+		"1=1", "1=1--", "1=1/*", "1=1#",
+		"or 1=1", "or 1=1--", "or 1=1/*", "or 1=1#",
+		"and 1=1", "and 1=1--", "and 1=1/*", "and 1=1#",
+	}
+
+	for _, pattern := range sqlPatterns {
+		if strings.Contains(lowerInput, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isValidEthereumAddress validates Ethereum address format
+func (b *Bot) isValidEthereumAddress(address string) bool {
+	// Remove 0x prefix if present for validation
+	addr := strings.TrimPrefix(strings.ToLower(address), "0x")
+
+	// Check length (40 hex characters)
+	if len(addr) != 40 {
+		return false
+	}
+
+	// Check if all characters are valid hex
+	for _, char := range addr {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isValidTrainingID validates training ID format
+func (b *Bot) isValidTrainingID(trainingID string) bool {
+	// Training ID should be alphanumeric with underscores and hyphens
+	// Length between 1 and 255 characters
+	if len(trainingID) == 0 || len(trainingID) > 255 {
+		return false
+	}
+
+	// Check for valid characters (alphanumeric, underscore, hyphen)
+	for _, char := range trainingID {
+		if !((char >= '0' && char <= '9') ||
+			(char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			char == '_' || char == '-') {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isValidHuggingFaceID validates Hugging Face ID format
+func (b *Bot) isValidHuggingFaceID(hfID string) bool {
+	// Hugging Face ID should be in format: username/repository-name
+	// Length between 1 and 255 characters
+	if len(hfID) == 0 || len(hfID) > 255 {
+		return false
+	}
+
+	// Check for valid characters (alphanumeric, underscore, hyphen, forward slash)
+	for _, char := range hfID {
+		if !((char >= '0' && char <= '9') ||
+			(char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			char == '_' || char == '-' || char == '/') {
+			return false
+		}
+	}
+
+	// Must contain exactly one forward slash
+	parts := strings.Split(hfID, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+
+	return true
 }

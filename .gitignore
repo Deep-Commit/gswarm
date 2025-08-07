@@ -25,6 +25,9 @@ dist/
 .env
 .env.local
 .env.*.local
+.env.development
+.env.test
+.env.production
 
 # IDE and editor files
 .vscode/
@@ -57,9 +60,14 @@ temp/
 # Configuration files with sensitive data
 config.yaml
 config.yml
+config.local.yaml
+config.dev.yaml
+config.test.yaml
+config.blockchain-listener.yaml
 *.key
 *.pem
 *.crt
+*.csr
 
 # Database files
 *.db
@@ -69,6 +77,7 @@ config.yml
 # Backup files
 *.bak
 *.backup
+*.old
 
 # Node modules (if any frontend components)
 node_modules/
@@ -88,7 +97,19 @@ venv/
 
 # Local development files
 local/
-dev/ 
+dev/
 
+# Telegram and Discord bot local files
 telegram_previous_data.json
 telegram-config.json
+discord-config.json
+
+# Local logs and debugging
+debug.log
+error.log
+access.log
+
+# Local temporary files
+*.tmp
+*.temp
+*.cache

@@ -12,6 +12,7 @@ LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildDate=$(BUILD_DATE) 
 TELEGRAM_BINARY := gswarm
 DISCORD_BINARY := discordd
 SERVER_BINARY := gswarm-server
+BLOCKCHAIN_LISTENER_BINARY := blockchain-listener
 
 # Build directory
 BUILD_DIR := build
@@ -19,13 +20,13 @@ BUILD_DIR := build
 # Go files
 GO_FILES := $(shell find . -name "*.go" -type f)
 
-.PHONY: all build build-telegram build-discord build-server clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help
+.PHONY: all build build-telegram build-discord build-blockchain-listener build-server clean install test test-unit test-integration test-coverage test-bench fmt lint lint-vet lint-staticcheck lint-full version help
 
 # Default target
 all: build
 
-# Build both applications
-build: build-telegram build-discord
+# Build all applications
+build: build-telegram build-discord build-blockchain-listener
 
 # Build the Telegram bot
 build-telegram:
@@ -41,6 +42,13 @@ build-discord:
 	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY) ./cmd/discordd
 	@echo "Discord bot build complete: $(BUILD_DIR)/$(DISCORD_BINARY)"
 
+# Build the Blockchain Listener
+build-blockchain-listener:
+	@echo "Building Blockchain Listener version $(VERSION)..."
+	@mkdir -p $(BUILD_DIR)
+	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BLOCKCHAIN_LISTENER_BINARY) ./cmd/blockchain-listener
+	@echo "Blockchain listener build complete: $(BUILD_DIR)/$(BLOCKCHAIN_LISTENER_BINARY)"
+
 # Build for all platforms
 build-all: clean
 	@echo "Building GSwarm for all platforms..."
@@ -50,20 +58,25 @@ build-all: clean
 	@echo "Building for Linux..."
 	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-linux-amd64 ./cmd/gswarm
 	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-linux-amd64 ./cmd/discordd
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BLOCKCHAIN_LISTENER_BINARY)-linux-amd64 ./cmd/blockchain-listener
 	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-linux-arm64 ./cmd/gswarm
 	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-linux-arm64 ./cmd/discordd
+	@GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BLOCKCHAIN_LISTENER_BINARY)-linux-arm64 ./cmd/blockchain-listener
 	
 	# macOS
 	@echo "Building for macOS..."
 	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-darwin-amd64 ./cmd/gswarm
 	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-darwin-amd64 ./cmd/discordd
+	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BLOCKCHAIN_LISTENER_BINARY)-darwin-amd64 ./cmd/blockchain-listener
 	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-darwin-arm64 ./cmd/gswarm
 	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-darwin-arm64 ./cmd/discordd
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BLOCKCHAIN_LISTENER_BINARY)-darwin-arm64 ./cmd/blockchain-listener
 	
 	# Windows
 	@echo "Building for Windows..."
 	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(TELEGRAM_BINARY)-windows-amd64.exe ./cmd/gswarm
 	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(DISCORD_BINARY)-windows-amd64.exe ./cmd/discordd
+	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BLOCKCHAIN_LISTENER_BINARY)-windows-amd64.exe ./cmd/blockchain-listener
 	
 	@echo "Build complete for all platforms!"
 
@@ -73,8 +86,10 @@ install: build
 	@rm -f $(shell go env GOPATH)/bin/$(TELEGRAM_BINARY)
 	@rm -f $(shell go env GOPATH)/bin/$(DISCORD_BINARY)
 	@rm -f $(shell go env GOPATH)/bin/$(SERVER_BINARY)
+	@rm -f $(shell go env GOPATH)/bin/$(BLOCKCHAIN_LISTENER_BINARY)
 	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(TELEGRAM_BINARY) $(shell go env GOPATH)/bin/$(TELEGRAM_BINARY)
 	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(DISCORD_BINARY) $(shell go env GOPATH)/bin/$(DISCORD_BINARY)
+	@ln -sf $(shell pwd)/$(BUILD_DIR)/$(BLOCKCHAIN_LISTENER_BINARY) $(shell go env GOPATH)/bin/$(BLOCKCHAIN_LISTENER_BINARY)
 	@echo "Installation complete!"
 
 # Clean build artifacts
@@ -179,10 +194,38 @@ run-discord:
 	@echo "✅ All required environment variables set, starting Discord bot..."
 	@./build/discordd
 
+# Run the blockchain listener
+run-blockchain-listener:
+	@echo "Starting Blockchain Listener..."
+	@echo "Make sure to set these environment variables:"
+	@echo "  RPC_URL=your_ethereum_rpc_url"
+	@echo "  CONTRACT_ADDRESS=your_contract_address"
+	@echo "  POSTGRES_DSN=your_postgres_connection_string"
+	@echo ""
+	@if [ -z "$$RPC_URL" ]; then \
+		echo "❌ RPC_URL not set"; \
+		exit 1; \
+	fi
+	@if [ -z "$$CONTRACT_ADDRESS" ]; then \
+		echo "❌ CONTRACT_ADDRESS not set"; \
+		exit 1; \
+	fi
+	@if [ -z "$$POSTGRES_DSN" ]; then \
+		echo "❌ POSTGRES_DSN not set"; \
+		exit 1; \
+	fi
+	@echo "✅ All required environment variables set, starting blockchain listener..."
+	@./build/blockchain-listener
+
 # Test the account linking system
 test-account-linking:
 	@echo "Testing account linking system..."
 	@./scripts/test-account-linking.sh
+
+# Test the blockchain listener
+test-blockchain-listener:
+	@echo "Testing blockchain listener..."
+	@./scripts/test-blockchain-listener.sh
 
 # Show help
 help:
@@ -202,12 +245,14 @@ help:
 	@echo "  test-bench   - Run benchmarks"
 	@echo "  test-short   - Run tests in short mode (skip integration)"
 	@echo "  test-account-linking - Test the account linking system"
+	@echo "  test-blockchain-listener - Test the blockchain listener"
 	@echo "  fmt          - Format code"
 	@echo "  lint         - Run comprehensive linting (vet + staticcheck + golangci-lint)"
 	@echo "  lint-vet     - Run go vet (basic Go toolchain checks)"
 	@echo "  lint-staticcheck - Run Staticcheck (advanced static analysis)"
 	@echo "  lint-full    - Run full linting suite with extended timeout"
 	@echo "  run-discord  - Run the Discord bot (connects to external API)"
+	@echo "  run-blockchain-listener - Run the blockchain listener"
 	@echo "  version      - Show version information"
 	@echo "  help         - Show this help message"
 	@echo ""
@@ -228,6 +273,13 @@ help:
 	@echo "     export GSWARM_API_SECRET=your_secret"
 	@echo "     export DISCORD_GUILD_ID=your_guild_id"
 	@echo "  2. Run: make run-discord"
+	@echo ""
+	@echo "Quick Start (Blockchain Listener):"
+	@echo "  1. Set environment variables:"
+	@echo "     export RPC_URL=wss://your-rpc-url"
+	@echo "     export CONTRACT_ADDRESS=0x1234567890123456789012345678901234567890"
+	@echo "     export POSTGRES_DSN=postgres://user:pass@host:5432/db"
+	@echo "  2. Run: make run-blockchain-listener"
 	@echo ""
 	@echo "Telegram Monitoring Service:"
 	@echo "  - Real-time blockchain monitoring for Gensyn AI"

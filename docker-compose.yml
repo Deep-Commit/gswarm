@@ -32,6 +32,55 @@ services:
       - "com.gswarm.service=discord-bot"
       - "com.gswarm.version=${VERSION:-1.0.0}"
 
+  # Blockchain Listener Service
+  blockchain-listener:
+    build:
+      context: .
+      dockerfile: Dockerfile.blockchain-listener
+      args:
+        - VERSION=${VERSION:-1.0.0}
+        - BUILD_DATE=${BUILD_DATE:-unknown}
+        - GIT_COMMIT=${GIT_COMMIT:-unknown}
+    container_name: gswarm-blockchain-listener
+    restart: unless-stopped
+    command: ["./blockchain-listener"]
+    volumes: []
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "blockchain-listener"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - gswarm-network
+    labels:
+      - "com.gswarm.service=blockchain-listener"
+      - "com.gswarm.version=${VERSION:-1.0.0}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # PostgreSQL Database for blockchain events
+  postgres:
+    image: postgres:15-alpine
+    container_name: gswarm-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=blockchain_events
+      - POSTGRES_USER=${POSTGRES_USER:-gswarm}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-gswarm_password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gswarm}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - gswarm-network
+
   # Optional: Redis for caching (if needed for future features)
   redis:
     image: redis:7-alpine
@@ -59,4 +108,6 @@ networks:
 
 volumes:
   redis-data:
+    driver: local
+  postgres-data:
     driver: local 

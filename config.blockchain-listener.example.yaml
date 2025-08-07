@@ -1,0 +1,68 @@
+# Blockchain Listener Configuration Example
+# Copy this file to config.blockchain-listener.yaml and update with your values
+
+# Ethereum Configuration
+ethereum:
+  # RPC URL for Ethereum network (WebSocket recommended for real-time events)
+  rpc_url: "wss://sepolia.alchemyapi.io/v2/YOUR_API_KEY"
+  # Contract address to monitor for events
+  contract_address: "0x1234567890123456789012345678901234567890"
+  # Contract name (used for ABI lookup)
+  contract_name: "blockassist"
+
+# Database Configuration
+database:
+  # PostgreSQL connection string
+  postgres_dsn: "postgres://user:password@localhost:5432/blockchain_events?sslmode=disable"
+  # Connection pool settings
+  max_connections: 10
+  min_connections: 2
+  max_conn_lifetime: "1h"
+
+# ABI Configuration
+abi:
+  # Directory containing ABI files
+  directory: "internal/blockchain/abis"
+  # Contract name to monitor (must match ABI filename without .json extension)
+  contract_name: "blockassist"
+
+# Event Configuration
+events:
+  # Event types to monitor (automatically detected from ABI)
+  monitored_events:
+    - "HFUploadVerified"
+    - "HFUploadSubmitted"
+    - "HFUploadRejected"
+
+  # Backfill settings
+  backfill_enabled: true
+  backfill_batch_size: 1000
+
+# Logging Configuration
+logging:
+  # Log level (debug, info, warn, error)
+  level: "info"
+  # Log format (json, text)
+  format: "text"
+  # Include timestamps in logs
+  timestamps: true
+  # Log events to console
+  log_events: true
+
+# Monitoring Configuration
+monitoring:
+  # Health check endpoint (optional)
+  health_check_enabled: false
+  health_check_port: ":8081"
+  # Metrics collection (for future use)
+  metrics_enabled: false
+  metrics_port: ":8082"
+
+# Reconnection Settings
+reconnection:
+  # Initial delay before reconnecting (seconds)
+  initial_delay: 5
+  # Maximum delay between reconnection attempts (seconds)
+  max_delay: 300
+  # Exponential backoff multiplier
+  backoff_multiplier: 2.0 

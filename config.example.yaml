@@ -18,8 +18,10 @@ discord:
   guilds:
     - id: "your_discord_guild_id_1"
       role_id: "your_discord_role_id_1"
+      block_role_id: "your_block_role_id_1"  # BLOCK role for verified users
     - id: "your_discord_guild_id_2"
       role_id: "your_discord_role_id_2"
+      block_role_id: "your_block_role_id_2"  # BLOCK role for verified users
 
 # Telegram Bot Configuration
 telegram:

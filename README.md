@@ -209,6 +209,141 @@ ENV GSWARM_EOA_ADDRESS=0x1234567890abcdef...
 CMD ["./gswarm"]
 ```
 
+## 🔗 Blockchain Listener Service
+
+The GSwarm project includes a **Blockchain Listener** service that monitors Ethereum smart contracts for specific events and stores them in a PostgreSQL database. This service is designed to be extensible for future blockchain integrations.
+
+### Features
+
+- 🔍 **Real-time Event Monitoring**: Listens for smart contract events via WebSocket
+- 📊 **PostgreSQL Storage**: Stores events with timestamps and metadata
+- 🔄 **Automatic Reconnection**: Handles network disconnections gracefully
+- 📈 **Event Backfilling**: Catches up on missed events when reconnecting
+- 🛡️ **Idempotent Operations**: Prevents duplicate event processing
+- 🔧 **Configurable**: Supports multiple configuration methods
+
+### Current Support
+
+- **Ethereum**: HFUploadVerified events
+- **Future**: Extensible for other blockchains and event types
+
+### Quick Start
+
+#### Prerequisites
+
+- Go 1.24+ (for building the service)
+- PostgreSQL database
+- Ethereum RPC URL (WebSocket recommended)
+- Smart contract address to monitor
+
+#### Installation
+
+```bash
+# Build the blockchain listener
+make build-blockchain-listener
+
+# Or build all services
+make build
+```
+
+#### Configuration
+
+The blockchain listener can be configured via:
+
+1. **Environment Variables**:
+   ```bash
+   export RPC_URL="wss://sepolia.alchemyapi.io/v2/YOUR_API_KEY"
+   export CONTRACT_ADDRESS="0x1234567890123456789012345678901234567890"
+   export POSTGRES_DSN="postgres://user:password@localhost:5432/blockchain_events"
+   ```
+
+2. **Command Line Flags**:
+   ```bash
+   ./build/blockchain-listener \
+     --rpc-url "wss://sepolia.alchemyapi.io/v2/YOUR_API_KEY" \
+     --contract-address "0x1234567890123456789012345678901234567890" \
+     --postgres-dsn "postgres://user:password@localhost:5432/blockchain_events"
+   ```
+
+3. **Configuration File**:
+   ```bash
+   # Copy the example config
+   cp config.blockchain-listener.example.yaml config.blockchain-listener.yaml
+   # Edit the configuration
+   nano config.blockchain-listener.yaml
+   ```
+
+#### Running the Service
+
+```bash
+# Run with environment variables
+./build/blockchain-listener
+
+# Run with command line flags
+./build/blockchain-listener --rpc-url "wss://..." --contract-address "0x..." --postgres-dsn "postgres://..."
+
+# Show version
+./build/blockchain-listener --version
+```
+
+#### Docker Deployment
+
+```bash
+# Using docker-compose (includes PostgreSQL)
+docker-compose up blockchain-listener
+
+# Or build and run manually
+docker build -f Dockerfile.blockchain-listener -t gswarm-blockchain-listener .
+docker run -d \
+  -e RPC_URL="wss://sepolia.alchemyapi.io/v2/YOUR_API_KEY" \
+  -e CONTRACT_ADDRESS="0x1234567890123456789012345678901234567890" \
+  -e POSTGRES_DSN="postgres://user:password@localhost:5432/blockchain_events" \
+  gswarm-blockchain-listener
+```
+
+### Database Schema
+
+The service creates the following tables:
+
+```sql
+-- Events table
+CREATE TABLE events (
+    user_address TEXT NOT NULL,
+    training_id TEXT NOT NULL,
+    hugging_face_id TEXT NOT NULL,
+    num_sessions BIGINT NOT NULL,
+    telemetry_enabled BOOLEAN NOT NULL,
+    block_number BIGINT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (user_address, training_id)
+);
+
+-- Metadata table for tracking processed blocks
+CREATE TABLE metadata (
+    key TEXT PRIMARY KEY,
+    value BIGINT,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+### Monitoring and Health Checks
+
+The service includes:
+- **Graceful shutdown** with signal handling
+- **Automatic reconnection** with exponential backoff
+- **Event backfilling** to catch missed events
+- **Comprehensive logging** for debugging
+- **Health check endpoint** (optional, configurable)
+
+### Future Extensibility
+
+The blockchain listener is designed to be easily extended for:
+- **Other blockchains** (Solana, Polygon, etc.)
+- **Additional event types** (beyond HFUploadVerified)
+- **Multiple contract monitoring** (parallel processing)
+- **Advanced filtering** (event-specific filters)
+- **Metrics and monitoring** (Prometheus integration)
+
 ## 📖 Usage
 
 ### Interactive Setup (Default)
