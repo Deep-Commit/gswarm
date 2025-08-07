@@ -17,8 +17,9 @@ import (
 
 // Config holds the Discord bot configuration
 type GuildConfig struct {
-	ID     string `yaml:"id"`
-	RoleID string `yaml:"role_id"`
+	ID          string `yaml:"id"`
+	RoleID      string `yaml:"role_id"`
+	BlockRoleID string `yaml:"block_role_id"`
 }
 
 type Config struct {
@@ -696,11 +697,37 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 	b.respondToInteraction(s, i, "✅ Verification successful! You have been assigned the BLOCK role.", true)
 }
 
-// assignBlockRole assigns the BLOCK role to a user
+// assignBlockRole assigns the BLOCK role to a user using the configured block_role_id
 func (b *Bot) assignBlockRole(discordID string, guildCfg *GuildConfig) error {
-	// For now, we'll use the existing role assignment logic
-	// You may want to create a separate BLOCK role ID in the config
-	return b.assignGSwarmRole(discordID, guildCfg)
+	if guildCfg.BlockRoleID == "" {
+		log.Printf("No BLOCK role ID configured for guild %s, skipping role assignment for user %s", guildCfg.ID, discordID)
+		return fmt.Errorf("BLOCK role ID not configured for this server")
+	}
+
+	log.Printf("Starting BLOCK role assignment for user %s with role ID %s", discordID, guildCfg.BlockRoleID)
+
+	// Add the BLOCK role to the user
+	log.Printf("Adding BLOCK role %s to user %s in guild %s", guildCfg.BlockRoleID, discordID, guildCfg.ID)
+	err := b.session.GuildMemberRoleAdd(guildCfg.ID, discordID, guildCfg.BlockRoleID)
+	if err != nil {
+		if strings.Contains(err.Error(), "50001") {
+			return fmt.Errorf("missing permissions - ensure bot role is higher than target BLOCK role in hierarchy: %w", err)
+		}
+		if strings.Contains(err.Error(), "50013") {
+			return fmt.Errorf("missing permissions - ensure bot has 'Manage Roles' permission: %w", err)
+		}
+		return fmt.Errorf("failed to assign BLOCK role to user %s: %w", discordID, err)
+	}
+
+	log.Printf("Successfully assigned BLOCK role to user %s in guild %s", discordID, guildCfg.ID)
+
+	// Optionally update role assignment timestamp in API for consistency with other flows
+	if err := b.updateRoleAssignmentTimestamp(discordID, true); err != nil {
+		log.Printf("Warning: Failed to update role assignment timestamp for user %s: %v", discordID, err)
+		// Do not fail the command since the role was assigned successfully
+	}
+
+	return nil
 }
 
 // validateInputs validates and sanitizes user inputs
