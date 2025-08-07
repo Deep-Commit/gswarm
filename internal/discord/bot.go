@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -72,7 +73,13 @@ func NewBot(config *Config) (*Bot, error) {
 	// Connect to database if DSN is provided
 	var dbPool *pgxpool.Pool
 	if config.DatabaseDSN != "" {
-		dbPool, err = pgxpool.New(ctx, config.DatabaseDSN)
+		// Parse/normalize the DSN to safely handle special characters
+		parsedDSN, parseErr := parsePostgresDSN(config.DatabaseDSN)
+		if parseErr != nil {
+			return nil, fmt.Errorf("failed to parse database DSN: %w", parseErr)
+		}
+
+		dbPool, err = pgxpool.New(ctx, parsedDSN)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to database: %w", err)
 		}
@@ -168,7 +175,7 @@ func (b *Bot) registerCommands() error {
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "user_address",
-					Description: "Your Ethereum wallet address",
+					Description: "Your wallet address",
 					Required:    true,
 				},
 				{
@@ -607,7 +614,7 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 
 	// Validate required parameters
 	if userAddress == "" {
-		b.respondToInteraction(s, i, "❌ User address is required. Please provide your Ethereum wallet address.", true)
+		b.respondToInteraction(s, i, "❌ User address is required. Please provide your wallet address.", true)
 		return
 	}
 
@@ -744,9 +751,9 @@ func (b *Bot) validateInputs(userAddress, trainingID, huggingFaceID string) erro
 		return fmt.Errorf("invalid characters detected in input")
 	}
 
-	// Validate Ethereum address format
+	// Validate EVM address format
 	if !b.isValidEthereumAddress(userAddress) {
-		return fmt.Errorf("invalid Ethereum address format")
+		return fmt.Errorf("invalid wallet address format")
 	}
 
 	// Validate training ID if provided
@@ -857,4 +864,51 @@ func (b *Bot) isValidHuggingFaceID(hfID string) bool {
 	}
 
 	return true
+}
+
+// parsePostgresDSN mirrors the listener's DSN parsing to handle special chars
+func parsePostgresDSN(dsn string) (string, error) {
+	if _, err := url.Parse(dsn); err == nil {
+		return dsn, nil
+	}
+
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		parsedURL, err := url.Parse(dsn)
+		if err != nil {
+			return handleMalformedPostgresURL(dsn)
+		}
+		if parsedURL.User != nil {
+			if password, ok := parsedURL.User.Password(); ok {
+				parsedURL.User = url.UserPassword(parsedURL.User.Username(), url.QueryEscape(password))
+			}
+		}
+		return parsedURL.String(), nil
+	}
+
+	return dsn, nil
+}
+
+// handleMalformedPostgresURL handles PostgreSQL URLs with special passwords
+func handleMalformedPostgresURL(dsn string) (string, error) {
+	dsn = strings.TrimPrefix(dsn, "postgres://")
+	dsn = strings.TrimPrefix(dsn, "postgresql://")
+
+	parts := strings.SplitN(dsn, "@", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid PostgreSQL URL format")
+	}
+	userPass := parts[0]
+	hostDB := parts[1]
+
+	userPassParts := strings.SplitN(userPass, ":", 2)
+	if len(userPassParts) != 2 {
+		return "", fmt.Errorf("invalid user:password format in PostgreSQL URL")
+	}
+
+	username := userPassParts[0]
+	password := userPassParts[1]
+	encodedPassword := url.QueryEscape(password)
+
+	reconstructed := fmt.Sprintf("postgres://%s:%s@%s", username, encodedPassword, hostDB)
+	return reconstructed, nil
 }
