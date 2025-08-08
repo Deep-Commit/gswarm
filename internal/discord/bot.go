@@ -86,7 +86,14 @@ func NewBot(config *Config) (*Bot, error) {
 		}
 		log.Println("Connected to database successfully")
 
-		// No schema management needed for compliance mode (avoid persisting user mappings)
+		if _, err := dbPool.Exec(context.Background(), `
+			CREATE TABLE IF NOT EXISTS used_eoas (
+				user_address TEXT PRIMARY KEY,
+				used_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+			);
+		`); err != nil {
+			return nil, fmt.Errorf("failed to ensure used_eoas table: %w", err)
+		}
 	}
 
 	// Create context for graceful shutdown (after error-prone setup)
@@ -670,6 +677,21 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 		return
 	}
 
+	// Check that the EOA has not been used before
+	var alreadyUsed bool
+	if err := b.dbPool.QueryRow(context.Background(), `
+		SELECT EXISTS(SELECT 1 FROM used_eoas WHERE LOWER(user_address) = LOWER($1))
+	`, userAddress).Scan(&alreadyUsed); err != nil {
+		log.Printf("Failed to check EOA reuse: %v", err)
+		b.respondToInteraction(s, i, "❌ Failed to check wallet status. Please try again later.", true)
+		return
+	}
+
+	if alreadyUsed {
+		b.respondToInteraction(s, i, "❌ This address has already been used.", true)
+		return
+	}
+
 	var eventExists bool
 	var query string
 	var args []interface{}
@@ -704,6 +726,16 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 	}
 
 	// Proceed to role assignment if not already assigned
+
+	// Mark the EOA as used (best-effort; if this fails, do not assign the role)
+	if _, err := b.dbPool.Exec(context.Background(), `
+		INSERT INTO used_eoas (user_address) VALUES (LOWER($1))
+		ON CONFLICT (user_address) DO NOTHING
+	`, userAddress); err != nil {
+		log.Printf("Failed to record EOA usage: %v", err)
+		b.respondToInteraction(s, i, "❌ Failed to record verification. Please try again later.", true)
+		return
+	}
 
 	// Assign BLOCK role
 	if err := b.assignBlockRole(discordID, guildCfg); err != nil {
