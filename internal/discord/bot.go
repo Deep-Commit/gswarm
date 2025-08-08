@@ -688,7 +688,7 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 	}
 
 	if alreadyUsed {
-		b.respondToInteraction(s, i, "❌ This wallet has already been used for verification.", true)
+		b.respondToInteraction(s, i, "❌ This address has already been used.", true)
 		return
 	}
 
