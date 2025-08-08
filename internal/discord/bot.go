@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"sync"
+
 	"github.com/bwmarrin/discordgo"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -33,12 +35,14 @@ type Config struct {
 
 // Bot represents the Discord bot instance
 type Bot struct {
-	config     *Config
-	session    *discordgo.Session
-	ctx        context.Context
-	cancel     context.CancelFunc
-	httpClient *http.Client
-	dbPool     *pgxpool.Pool
+	config        *Config
+	session       *discordgo.Session
+	ctx           context.Context
+	cancel        context.CancelFunc
+	httpClient    *http.Client
+	dbPool        *pgxpool.Pool
+	rateMu        sync.Mutex
+	blockAttempts map[string][]time.Time
 }
 
 // Helper to get GuildConfig by guild ID
@@ -62,9 +66,6 @@ func NewBot(config *Config) (*Bot, error) {
 	// Set up bot intents
 	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers
 
-	// Create context for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background())
-
 	// Create HTTP client for API calls
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second, // Match the timeout used in API calls
@@ -79,20 +80,26 @@ func NewBot(config *Config) (*Bot, error) {
 			return nil, fmt.Errorf("failed to parse database DSN: %w", parseErr)
 		}
 
-		dbPool, err = pgxpool.New(ctx, parsedDSN)
+		dbPool, err = pgxpool.New(context.Background(), parsedDSN)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to database: %w", err)
 		}
 		log.Println("Connected to database successfully")
+
+		// No schema management needed for compliance mode (avoid persisting user mappings)
 	}
 
+	// Create context for graceful shutdown (after error-prone setup)
+	ctx, cancel := context.WithCancel(context.Background())
+
 	bot := &Bot{
-		config:     config,
-		session:    session,
-		ctx:        ctx,
-		cancel:     cancel,
-		httpClient: httpClient,
-		dbPool:     dbPool,
+		config:        config,
+		session:       session,
+		ctx:           ctx,
+		cancel:        cancel,
+		httpClient:    httpClient,
+		dbPool:        dbPool,
+		blockAttempts: make(map[string][]time.Time),
 	}
 
 	// Set up event handlers
@@ -582,12 +589,6 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 
 	log.Printf("Block command received from Guild: %s, Channel: %s, User: %s", guildID, channelID, discordID)
 
-	// Check if database is connected
-	if b.dbPool == nil {
-		b.respondToInteraction(s, i, "❌ Database connection not available. Please try again later.", true)
-		return
-	}
-
 	// Get guild config
 	guildCfg := b.getGuildConfig(guildID)
 	if guildCfg == nil {
@@ -627,23 +628,48 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 		return
 	}
 
-	// Check if user is already verified
-	var existingVerified bool
-	err := b.dbPool.QueryRow(context.Background(), `
-		SELECT EXISTS(SELECT 1 FROM verified_users WHERE discord_id = $1)
-	`, discordID).Scan(&existingVerified)
-	if err != nil {
-		log.Printf("Failed to check if user is already verified: %v", err)
-		b.respondToInteraction(s, i, "❌ Failed to check verification status. Please try again later.", true)
+	// Lightweight per-user rate limiting: max 3 attempts per 10 minutes
+	b.rateMu.Lock()
+	const maxAttempts = 3
+	const window = 10 * time.Minute
+	attempts := b.blockAttempts[discordID]
+	now := time.Now()
+	// prune old attempts
+	pruned := attempts[:0]
+	for _, ts := range attempts {
+		if now.Sub(ts) <= window {
+			pruned = append(pruned, ts)
+		}
+	}
+	attempts = pruned
+	if len(attempts) >= maxAttempts {
+		b.rateMu.Unlock()
+		b.respondToInteraction(s, i, "⏳ Too many verification attempts. Please try again in a few minutes.", true)
+		return
+	}
+	attempts = append(attempts, now)
+	b.blockAttempts[discordID] = attempts
+	b.rateMu.Unlock()
+
+	// Avoid persistent verification checks; rely on role presence
+	member, merr := b.session.GuildMember(guildCfg.ID, discordID)
+	if merr == nil {
+		for _, rid := range member.Roles {
+			if rid == guildCfg.BlockRoleID {
+				b.respondToInteraction(s, i, "✅ You are already verified and have the BLOCK role!", true)
+				return
+			}
+		}
+	}
+
+	// Do not persist or cross-link addresses across users in compliance mode
+
+	// Ephemeral verification: require a matching on-chain event to exist in the listener DB
+	if b.dbPool == nil {
+		b.respondToInteraction(s, i, "❌ Verification service unavailable. Please try again later.", true)
 		return
 	}
 
-	if existingVerified {
-		b.respondToInteraction(s, i, "✅ You are already verified and have the BLOCK role!", true)
-		return
-	}
-
-	// Check if HFUploadVerified event exists
 	var eventExists bool
 	var query string
 	var args []interface{}
@@ -666,8 +692,7 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 		args = []interface{}{userAddress, huggingFaceID}
 	}
 
-	err = b.dbPool.QueryRow(context.Background(), query, args...).Scan(&eventExists)
-	if err != nil {
+	if err := b.dbPool.QueryRow(context.Background(), query, args...).Scan(&eventExists); err != nil {
 		log.Printf("Failed to check for HFUploadVerified event: %v", err)
 		b.respondToInteraction(s, i, "❌ Failed to verify event. Please try again later.", true)
 		return
@@ -678,21 +703,10 @@ func (b *Bot) handleBlockCommand(s *discordgo.Session, i *discordgo.InteractionC
 		return
 	}
 
-	// Insert verified user record
-	_, err = b.dbPool.Exec(context.Background(), `
-		INSERT INTO verified_users (discord_id, user_address, training_id, hugging_face_id)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (discord_id) DO NOTHING
-	`, discordID, strings.ToLower(userAddress), trainingID, huggingFaceID)
-	if err != nil {
-		log.Printf("Failed to insert verified user: %v", err)
-		b.respondToInteraction(s, i, "❌ Failed to record verification. Please try again later.", true)
-		return
-	}
+	// Proceed to role assignment if not already assigned
 
 	// Assign BLOCK role
-	err = b.assignBlockRole(discordID, guildCfg)
-	if err != nil {
+	if err := b.assignBlockRole(discordID, guildCfg); err != nil {
 		log.Printf("Failed to assign BLOCK role: %v", err)
 		b.respondToInteraction(s, i, "✅ Verification successful! However, there was an issue assigning the BLOCK role. Please contact an administrator.", true)
 		return
