@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 )
 
@@ -435,19 +433,28 @@ func (t *TelegramService) CheckVerificationStatus(telegramID int64) (*Verificati
 
 // GetUserRankData gets rank data for verified users' peer IDs
 func (t *TelegramService) GetUserRankData(telegramID int64) (*UserRankData, error) {
-	// Build peerIds query parameter as comma-separated string
-	peerIdsParam := strings.Join(t.PeerIDs, ",")
-	// Create HTTP request with peerIds in query
-	url := fmt.Sprintf("%s/user/data?telegramId=%d&peerIds=%s", t.Config.APIURL, telegramID, url.QueryEscape(peerIdsParam))
-	req, err := http.NewRequest("GET", url, nil)
+	// Build JSON body
+	payload := map[string]interface{}{
+		"telegramId": telegramID,
+	}
+	if len(t.PeerIDs) > 0 {
+		payload["peerIds"] = t.PeerIDs
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// POST to /api/user/data (avoid IDs in URL)
+	url := fmt.Sprintf("%s/user/data", t.Config.APIURL)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 
-	// Make the request
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -455,29 +462,19 @@ func (t *TelegramService) GetUserRankData(telegramID int64) (*UserRankData, erro
 	}
 	defer resp.Body.Close()
 
-	// Read response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	// Debug: Print the raw response
-	fmt.Printf("DEBUG: User rank data API response (status %d): %s\n", resp.StatusCode, string(body))
-
-	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Parse response
 	var userRankData UserRankData
 	if err := json.Unmarshal(body, &userRankData); err != nil {
 		return nil, fmt.Errorf("failed to parse API response: %w", err)
 	}
-
-	// Debug: Print parsed data
-	fmt.Printf("DEBUG: Parsed user rank data: TelegramID=%d, DiscordID=%d, Ranks=%d\n",
-		userRankData.TelegramID, userRankData.DiscordID, len(userRankData.Ranks))
 
 	return &userRankData, nil
 }
